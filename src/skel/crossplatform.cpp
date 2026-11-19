@@ -24,7 +24,7 @@ void GetLocalTime_CP(SYSTEMTIME *out) {
 #endif
 
 // Compatible with Linux/POSIX and MinGW on Windows
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__ZEEBO__)
 HANDLE FindFirstFile(const char* pathname, WIN32_FIND_DATA* firstfile) {
 	char pathCopy[MAX_PATH];
 	strcpy(pathCopy, pathname);
@@ -98,6 +98,23 @@ void FileTimeToSystemTime(time_t* writeTime, SYSTEMTIME* out) {
 	tm *ptm = gmtime(writeTime);
 	tmToSystemTime(ptm, out);
 }
+#elif defined(__ZEEBO__)
+HANDLE FindFirstFile(const char* pathname, WIN32_FIND_DATA* firstfile) {
+	(void)pathname; (void)firstfile;
+	return NULL;
+}
+bool FindNextFile(HANDLE d, WIN32_FIND_DATA* finddata) {
+	(void)d; (void)finddata;
+	return false;
+}
+void GetDateFormat(int unused1, int unused2, SYSTEMTIME* in, int unused3, char* out, int size) {
+	(void)unused1; (void)unused2; (void)unused3;
+	snprintf(out, (size_t)size, "%04d-%02d-%02d", in->wYear, in->wMonth, in->wDay);
+}
+void FileTimeToSystemTime(time_t* writeTime, SYSTEMTIME* out) {
+	tm *ptm = gmtime(writeTime);
+	if (ptm) tmToSystemTime(ptm, out);
+}
 #endif
 
 // Because wchar length differs between platforms.
@@ -111,7 +128,20 @@ AllocUnicode(const char* src)
 }
 
 // Funcs/features from Windows that we need on other platforms
-#ifndef _WIN32
+#ifdef __ZEEBO__
+char* casepath(char const* path, bool checkPath)
+{
+    (void)checkPath;
+    if (!path) return NULL;
+    size_t l = strlen(path);
+    char* out = (char*)malloc(l + 1);
+    if (!out) return NULL;
+    for (size_t i = 0; i <= l; i++) {
+        out[i] = (path[i] == '\\') ? '/' : path[i];
+    }
+    return out;
+}
+#elif !defined(_WIN32)
 char *strupr(char *s) {
     char* tmp = s;
 

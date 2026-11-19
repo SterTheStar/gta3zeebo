@@ -169,6 +169,12 @@ inline DebugMenuEntry *DebugMenuAddVar(const char *path, const char *name, uint1
 { return DebugMenuAddUInt16(path, name, ptr, triggerFunc, step, lowerBound, upperBound, strings); }
 inline DebugMenuEntry *DebugMenuAddVar(const char *path, const char *name, uint32_t *ptr, TriggerFunc triggerFunc, uint32_t step, uint32_t lowerBound, uint32_t upperBound, const char **strings)
 { return DebugMenuAddUInt32(path, name, ptr, triggerFunc, step, lowerBound, upperBound, strings); }
+#ifdef __ZEEBO__
+inline DebugMenuEntry *DebugMenuAddVar(const char *path, const char *name, int *ptr, TriggerFunc triggerFunc, int step, int lowerBound, int upperBound, const char **strings)
+{ return DebugMenuAddInt32(path, name, (int32_t*)ptr, triggerFunc, (int32_t)step, (int32_t)lowerBound, (int32_t)upperBound, strings); }
+inline DebugMenuEntry *DebugMenuAddVar(const char *path, const char *name, unsigned int *ptr, TriggerFunc triggerFunc, unsigned int step, unsigned int lowerBound, unsigned int upperBound, const char **strings)
+{ return DebugMenuAddUInt32(path, name, (uint32_t*)ptr, triggerFunc, (uint32_t)step, (uint32_t)lowerBound, (uint32_t)upperBound, strings); }
+#endif
 inline DebugMenuEntry *DebugMenuAddVar(const char *path, const char *name, uint64_t *ptr, TriggerFunc triggerFunc, uint64_t step, uint64_t lowerBound, uint64_t upperBound, const char **strings)
 { return DebugMenuAddUInt64(path, name, ptr, triggerFunc, step, lowerBound, upperBound, strings); }
 inline DebugMenuEntry *DebugMenuAddVar(const char *path, const char *name, float *ptr, TriggerFunc triggerFunc, float step, float lowerBound, float upperBound)

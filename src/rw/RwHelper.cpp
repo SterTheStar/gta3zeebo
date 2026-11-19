@@ -531,8 +531,10 @@ CameraSize(RwCamera * camera, RwRect * rect,
 
 		RwCameraSetViewWindow(camera, &vw);
 
-		RsGlobal.width  = rect->w;
-		RsGlobal.height = rect->h;
+		if (rect->w > 0 && rect->h > 0) {
+			RsGlobal.width  = rect->w;
+			RsGlobal.height = rect->h;
+		}
 	}
 
 	return;

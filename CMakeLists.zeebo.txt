@@ -1,0 +1,200 @@
+# CMakeLists.zeebo.txt - Zeebo / BREW 4.0.2 build configuration for GTA III (re3).
+#
+# Usage:
+#   cmake -S . -B build/zeebo -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/zeebo-arm.cmake -DCMAKE_BUILD_TYPE=Release
+#   (invoke with: cmake -S . -B build/zeebo -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/zeebo-arm.cmake)
+#   or rename/pass -C if desired.
+cmake_minimum_required(VERSION 3.16)
+project(gta3_zeebo C CXX ASM)
+
+set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# ---------------------------------------------------------------------------
+# 1. librw (GLES 1.1 fixed-function backend for Adreno 130)
+# ---------------------------------------------------------------------------
+set(LIBRW_SOURCES
+    vendor/librw/src/anim.cpp
+    vendor/librw/src/base.cpp
+    vendor/librw/src/bmp.cpp
+    vendor/librw/src/camera.cpp
+    vendor/librw/src/charset.cpp
+    vendor/librw/src/clump.cpp
+    vendor/librw/src/engine.cpp
+    vendor/librw/src/error.cpp
+    vendor/librw/src/frame.cpp
+    vendor/librw/src/geometry.cpp
+    vendor/librw/src/geoplg.cpp
+    vendor/librw/src/hanim.cpp
+    vendor/librw/src/image.cpp
+    vendor/librw/src/light.cpp
+    vendor/librw/src/matfx.cpp
+    vendor/librw/src/pipeline.cpp
+    vendor/librw/src/plg.cpp
+    vendor/librw/src/png.cpp
+    vendor/librw/src/prim.cpp
+    vendor/librw/src/raster.cpp
+    vendor/librw/src/render.cpp
+    vendor/librw/src/skin.cpp
+    vendor/librw/src/texture.cpp
+    vendor/librw/src/tga.cpp
+    vendor/librw/src/tristrip.cpp
+    vendor/librw/src/userdata.cpp
+    vendor/librw/src/uvanim.cpp
+    vendor/librw/src/world.cpp
+    vendor/librw/src/lodepng/lodepng.cpp
+    vendor/librw/src/d3d/d3d.cpp
+    vendor/librw/src/d3d/d3d8.cpp
+    vendor/librw/src/d3d/d3d8matfx.cpp
+    vendor/librw/src/d3d/d3d8render.cpp
+    vendor/librw/src/d3d/d3d8skin.cpp
+    vendor/librw/src/d3d/d3d9.cpp
+    vendor/librw/src/d3d/d3d9matfx.cpp
+    vendor/librw/src/d3d/d3d9render.cpp
+    vendor/librw/src/d3d/d3d9skin.cpp
+    vendor/librw/src/d3d/d3ddevice.cpp
+    vendor/librw/src/d3d/d3dimmed.cpp
+    vendor/librw/src/d3d/d3drender.cpp
+    vendor/librw/src/d3d/xbox.cpp
+    vendor/librw/src/d3d/xboxmatfx.cpp
+    vendor/librw/src/d3d/xboxskin.cpp
+    vendor/librw/src/d3d/xboxvfmt.cpp
+    vendor/librw/src/gl/gl3.cpp
+    vendor/librw/src/gl/gl3device.cpp
+    vendor/librw/src/gl/gl3immed.cpp
+    vendor/librw/src/gl/gl3matfx.cpp
+    vendor/librw/src/gl/gl3pipe.cpp
+    vendor/librw/src/gl/gl3raster.cpp
+    vendor/librw/src/gl/gl3render.cpp
+    vendor/librw/src/gl/gl3shader.cpp
+    vendor/librw/src/gl/gl3skin.cpp
+    vendor/librw/src/gl/wdgl.cpp
+    vendor/librw/src/ps2/pds.cpp
+    vendor/librw/src/ps2/ps2.cpp
+    vendor/librw/src/ps2/ps2device.cpp
+    vendor/librw/src/ps2/ps2matfx.cpp
+    vendor/librw/src/ps2/ps2raster.cpp
+    vendor/librw/src/ps2/ps2skin.cpp
+    vendor/librw/src/gles1/gles1.cpp
+    vendor/librw/src/gles1/gles1raster.cpp
+    vendor/librw/src/gles1/gles1immed.cpp
+    vendor/librw/src/gles1/gles1pipe.cpp
+)
+
+add_library(librw_zeebo STATIC ${LIBRW_SOURCES})
+
+target_include_directories(librw_zeebo PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/vendor/librw
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/zeebo
+)
+
+target_compile_definitions(librw_zeebo PUBLIC
+    __ZEEBO__=1
+    RW_GLES1=1
+)
+
+target_compile_options(librw_zeebo PRIVATE
+    -O2
+    -w
+    -fpermissive
+    -fsigned-char
+    -fno-strict-aliasing
+    -fno-exceptions
+    -fno-rtti
+    -fno-threadsafe-statics
+)
+
+# ---------------------------------------------------------------------------
+# 2. re3 sources (excluding Win32 / GLFW / POSIX pthreads / OpenAL / MSS)
+# ---------------------------------------------------------------------------
+file(GLOB_RECURSE RE3_ALL_SOURCES
+    "src/*.cpp"
+    "src/*.c"
+)
+
+set(RE3_ZEEBO_SOURCES "")
+foreach(SRC ${RE3_ALL_SOURCES})
+    file(RELATIVE_PATH REL "${CMAKE_CURRENT_SOURCE_DIR}" "${SRC}")
+    if(REL MATCHES "^src/skel/win/"
+       OR REL MATCHES "^src/skel/glfw/"
+       OR REL STREQUAL "src/core/CdStream.cpp"
+       OR REL STREQUAL "src/core/CdStreamPosix.cpp"
+       OR REL STREQUAL "src/audio/sampman_miles.cpp"
+       OR REL STREQUAL "src/audio/sampman_oal.cpp"
+       OR REL MATCHES "^src/audio/oal/"
+       OR REL MATCHES "^src/audio/eax/"
+       OR REL STREQUAL "src/extras/custompipes_d3d9.cpp"
+       OR REL STREQUAL "src/extras/custompipes_gl.cpp"
+       OR REL STREQUAL "src/extras/GitSHA1.cpp")
+        continue()
+    endif()
+    list(APPEND RE3_ZEEBO_SOURCES "${SRC}")
+endforeach()
+
+set(GIT_SHA1 "zeebo-port")
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/extras/GitSHA1.cpp.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/extras/GitSHA1.cpp"
+    @ONLY
+)
+list(APPEND RE3_ZEEBO_SOURCES "${CMAKE_CURRENT_BINARY_DIR}/extras/GitSHA1.cpp")
+
+# Collect all src subdirectories for re3's flat #include style
+file(GLOB_RECURSE RE3_HEADERS "src/*.h")
+set(RE3_INCLUDES "")
+foreach(HDR ${RE3_HEADERS})
+    file(RELATIVE_PATH REL_H "${CMAKE_CURRENT_SOURCE_DIR}" "${HDR}")
+    if(REL_H MATCHES "^src/skel/win/"
+       OR REL_H MATCHES "^src/skel/glfw/"
+       OR REL_H MATCHES "^src/audio/oal/"
+       OR REL_H MATCHES "^src/audio/eax/")
+        continue()
+    endif()
+    get_filename_component(DIR "${HDR}" DIRECTORY)
+    list(APPEND RE3_INCLUDES "${DIR}")
+endforeach()
+list(REMOVE_DUPLICATES RE3_INCLUDES)
+
+add_executable(gta3zeebo.elf ${RE3_ZEEBO_SOURCES})
+
+target_link_libraries(gta3zeebo.elf PRIVATE librw_zeebo)
+
+target_include_directories(gta3zeebo.elf PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${RE3_INCLUDES}
+)
+
+target_compile_definitions(gta3zeebo.elf PRIVATE
+    __ZEEBO__=1
+    RW_GLES1=1
+    LIBRW=1
+    NDEBUG=1
+    CMAKE_BUILD=1
+    USE_OUR_VERSIONING=1
+    CMAKE_NO_AUTOLINK=1
+)
+
+target_compile_options(gta3zeebo.elf PRIVATE
+    -O2
+    -w
+    -fpermissive
+    -fsigned-char
+    -fno-strict-aliasing
+    -fno-strict-overflow
+    -fno-exceptions
+    -fno-rtti
+    -fno-threadsafe-statics
+)
+
+target_link_options(gta3zeebo.elf PRIVATE
+    -T${CMAKE_CURRENT_SOURCE_DIR}/tools/zeebo/zeebo_mod.ld
+    -nostartfiles
+    -Wl,--gc-sections
+)
+
+if(ZEEBO_OBJCOPY)
+    add_custom_command(TARGET gta3zeebo.elf POST_BUILD
+        COMMAND ${ZEEBO_OBJCOPY} -O binary $<TARGET_FILE:gta3zeebo.elf> ${CMAKE_CURRENT_BINARY_DIR}/gta3zeebo.mod
+        COMMENT "Generating BREW flat binary gta3zeebo.mod"
+    )
+endif()

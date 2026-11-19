@@ -814,4 +814,13 @@ RenderIndexedPrimitive_UV2(RwPrimitiveType primType, Im2DVertexUV2 *vertices, Rw
 }
 #endif
 
+#ifdef RW_GLES1
+static void openim2d_uv2(void) {}
+static void closeim2d_uv2(void) {}
+static void RenderIndexedPrimitive_UV2(RwPrimitiveType primType, Im2DVertexUV2 *vertices, RwInt32 numVertices, RwImVertexIndex *indices, RwInt32 numIndices)
+{
+	(void)primType; (void)vertices; (void)numVertices; (void)indices; (void)numIndices;
+}
+#endif
+
 #endif

@@ -266,6 +266,8 @@ public:
 	static int XInputJoy1;
 	static int XInputJoy2;
 	void AffectFromXinput(uint32 pad);
+#elif defined(__ZEEBO__)
+	void AffectFromZeebo(void);
 #endif
 
 	// mouse

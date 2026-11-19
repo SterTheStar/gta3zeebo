@@ -268,6 +268,8 @@ void CReplay::Update(void)
 
 void CReplay::RecordThisFrame(void)
 {
+	if (!Record.m_pBase)
+		return;
 #ifdef FIX_REPLAY_BUGS
 	uint32 memory_required = sizeof(tGeneralPacket) + sizeof(tClockPacket) + sizeof(tWeatherPacket) + sizeof(tTimerPacket);
 	CVehiclePool* vehiclesT = CPools::GetVehiclePool();

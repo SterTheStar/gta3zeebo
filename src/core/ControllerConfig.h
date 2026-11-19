@@ -132,6 +132,9 @@ public:
 #if defined RW_GL3
 	GlfwJoyState           m_OldState;
 	GlfwJoyState           m_NewState;
+#elif defined(__ZEEBO__)
+	struct { int32 dummy; } m_OldState;
+	struct { int32 dummy; } m_NewState;
 #else
 	DIJOYSTATE2           m_OldState;
 	DIJOYSTATE2           m_NewState;

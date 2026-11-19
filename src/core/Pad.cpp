@@ -526,6 +526,8 @@ CMouseControllerState CMousePointerStateHelper::GetMouseSetUp()
 			state.WHEELUP = true;
 		}
 	}
+#elif defined(__ZEEBO__)
+	// No mouse on Zeebo
 #else
 	// It seems there is no way to get number of buttons on mouse, so assign all buttons if we have mouse.
 	double xpos = 1.0f, ypos;
@@ -585,6 +587,8 @@ void CPad::UpdateMouse()
 			NewMouseControllerState = PCTempMouseControllerState;
 		}
 	}
+#elif defined(__ZEEBO__)
+	// No mouse on Zeebo
 #else
 	if ( IsForegroundApp() && PSGLOBAL(cursorIsInWindow) )
 	{
@@ -1103,6 +1107,8 @@ void CPad::UpdatePads(void)
 #ifdef XINPUT
 	GetPad(0)->AffectFromXinput(m_bMapPadOneToPadTwo ? 1 : 0);
 	GetPad(1)->AffectFromXinput(m_bMapPadOneToPadTwo ? 0 : 1);
+#elif defined(__ZEEBO__)
+	GetPad(0)->AffectFromZeebo();
 #else
 	CapturePad(0);
 #endif

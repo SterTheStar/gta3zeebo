@@ -216,7 +216,12 @@ CStreaming::Init2(void)
 	debug("Streaming buffer size is %d sectors", ms_streamingBufferSize);
 
 	// PC only, figure out how much memory we got
-#ifdef GTA_PC
+#ifdef __ZEEBO__
+#define MB (1024*1024)
+	ms_memoryAvailable = 24*MB;
+	desiredNumVehiclesLoaded = 12;
+#undef MB
+#elif defined(GTA_PC)
 #define MB (1024*1024)
 
 	extern size_t _dwMemAvailPhys;
@@ -370,7 +375,12 @@ CStreaming::LoadCdDirectory(void)
 	char dirname[132];
 	int i;
 
-#ifdef GTA_PC
+#ifdef __ZEEBO__
+#define MB (1024*1024)
+	ms_memoryAvailable = 24*MB;
+	desiredNumVehiclesLoaded = 12;
+#undef MB
+#elif defined(GTA_PC)
 	ms_imageOffsets[0] = 0;
 	ms_imageOffsets[1] = -1;
 	ms_imageOffsets[2] = -1;

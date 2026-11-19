@@ -128,6 +128,15 @@ void GetLocalTime_CP(SYSTEMTIME* out);
 // Compatible with Linux/POSIX and MinGW on Windows
 #ifndef _WIN32
 #include <iostream>
+#ifdef __ZEEBO__
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+typedef void* DIR;
+typedef void* HANDLE;
+#define INVALID_HANDLE_VALUE NULL
+#define FindClose(h) do { (void)(h); } while(0)
+#else
 #include <dirent.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -141,6 +150,7 @@ typedef void* HANDLE;
         if (h != nil) \
             closedir((DIR*)h); \
     } while(0)
+#endif
 
 #define LOCALE_USER_DEFAULT 0
 #define DATE_SHORTDATE 0

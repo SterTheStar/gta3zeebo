@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.14)
 
+if(ZEEBO)
+    include(CMakeLists.zeebo.txt)
+    return()
+endif()
+
 set(EXECUTABLE re3)
 set(PROJECT RE3)
 

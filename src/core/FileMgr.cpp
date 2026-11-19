@@ -29,7 +29,9 @@ static myFILE myfiles[NUMFILES];
 
 
 #if !defined(_WIN32)
+#ifndef __ZEEBO__
 #include <dirent.h>
+#endif
 #include <errno.h>
 #include <unistd.h>
 #define _getcwd getcwd
