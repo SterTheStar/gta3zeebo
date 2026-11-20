@@ -418,4 +418,15 @@ void abort(void)
     _exit(1);
 }
 
+void* __gnu_Unwind_Find_exidx(void* pc, int* pcount)
+{
+    (void)pc;
+    if (pcount) *pcount = 0;
+    return 0;
+}
+
+void __libc_fini(void)
+{
+}
+
 } // extern "C"
