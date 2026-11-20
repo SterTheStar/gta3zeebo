@@ -2,7 +2,7 @@
 
 # Grand Theft Auto III Zeebo
 
-Port nativo de **Grand Theft Auto III (`re3`)** para **Zeebo (Qualcomm BREW 4.0.2)**
+Port nativo de **Grand Theft Auto III (PC)** para **Zeebo (Qualcomm BREW 4.0.2)**
 
 ![Platform](https://img.shields.io/badge/Plataforma-Zeebo%20(BREW%204.0.2)-0066cc?style=flat-square)
 ![Arch](https://img.shields.io/badge/CPU-ARMv6K%20%2B%20VFPv2-1f6feb?style=flat-square)
@@ -11,9 +11,7 @@ Port nativo de **Grand Theft Auto III (`re3`)** para **Zeebo (Qualcomm BREW 4.0.
 
 </div>
 
-Port não oficial, gratuito e de código aberto desenvolvido por **Esther** ([pandoragg.eu.cc](https://pandoragg.eu.cc)), baseado no projeto [`re3`](https://github.com/GTAmodding/re3) e [`librw`](https://github.com/aap/librw). Sem vínculo oficial com a Rockstar Games. **Nenhum arquivo original do jogo é incluído neste repositório.**
-
-> **Nota (`v1.0`):** Bugs gráficos e de desempenho são esperados nesta versão inicial.
+Port não oficial, gratuito e de código aberto desenvolvido por **Esther** ([pandoragg.eu.cc](https://pandoragg.eu.cc)). Sem vínculo oficial com a Rockstar Games. **Nenhum arquivo original do jogo é incluído neste repositório.**
 
 ---
 
