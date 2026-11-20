@@ -730,8 +730,8 @@ CCamera::Process(void)
 	LODDistMultiplier *= CRenderer::ms_lodDistScale;
 #endif
 #ifdef __ZEEBO__
-	// Switch to low-poly LODs earlier to reduce triangle & draw-call load on Zeebo
-	LODDistMultiplier *= 0.50f;
+	// Switch to low-poly LODs slightly earlier to reduce triangle & draw-call load on Zeebo
+	LODDistMultiplier *= 0.95f;
 #endif
 
 	// Keep track of speed

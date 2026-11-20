@@ -692,6 +692,7 @@ CWaterLevel::RenderWater()
 	RwRenderStateSet(rwRENDERSTATEFOGENABLE,     (void *)TRUE);
 	RwRenderStateSet(rwRENDERSTATESRCBLEND,      (void *)rwBLENDONE);
 	RwRenderStateSet(rwRENDERSTATEDESTBLEND,     (void *)rwBLENDZERO);
+	RwRenderStateSet(rwRENDERSTATECULLMODE,      (void *)rwCULLMODECULLNONE);
 	
 	CVector2D camPos
 	(

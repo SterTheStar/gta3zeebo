@@ -138,6 +138,8 @@ bool gbPrintMemoryUsage;
 #ifdef NEW_RENDERER
 bool gbNewRenderer;
 #define CLEARMODE (rwCAMERACLEARZ | rwCAMERACLEARSTENCIL)
+#elif defined(__ZEEBO__)
+#define CLEARMODE (rwCAMERACLEARIMAGE | rwCAMERACLEARZ)
 #else
 #define CLEARMODE (rwCAMERACLEARZ)
 #endif
