@@ -229,10 +229,24 @@ typedef void (*InitFn)(void);
 extern InitFn __init_array_start[];
 extern InitFn __init_array_end[];
 
+static AEEHelperFuncs* ResolveHelpers(void* ph)
+{
+    if (ph) {
+        return (AEEHelperFuncs*)ph;
+    }
+    uintptr_t addr = ((uintptr_t)&AEEMod_Load) & ~(uintptr_t)3u;
+    for (int i = 0; i < 256; ++i) {
+        const uint32_t* p = (const uint32_t*)(addr - (uintptr_t)(i * 4));
+        if (p[2] == 0x57455242u /* "BREW" */) {
+            return *(AEEHelperFuncs* const*)(p - 1);
+        }
+    }
+    return *(((AEEHelperFuncs* const*)(uintptr_t)&AEEMod_Load) - 1);
+}
+
 extern "C" __attribute__((section(".text.entry")))
 int AEEMod_Load(IShell* pIShell, void* ph, IModule** ppMod)
 {
-    (void)ph;
     if (!ppMod) {
         return EBADPARM;
     }
@@ -243,11 +257,9 @@ int AEEMod_Load(IShell* pIShell, void* ph, IModule** ppMod)
 
     memset(&g_Zeebo, 0, sizeof(g_Zeebo));
     g_Zeebo.pShell = pIShell;
-    if (ph) {
-        g_Zeebo.pHelpers = (AEEHelperFuncs*)ph;
-        if (g_Zeebo.pHelpers->pfnDbgPrintf) {
-            g_Zeebo.pHelpers->pfnDbgPrintf("[BREW] AEEMod_Load start\n");
-        }
+    g_Zeebo.pHelpers = ResolveHelpers(ph);
+    if (g_Zeebo.pHelpers && g_Zeebo.pHelpers->pfnDbgPrintf) {
+        g_Zeebo.pHelpers->pfnDbgPrintf("[BREW] AEEMod_Load start\n");
     }
 
     for (InitFn* fn = __init_array_start; fn < __init_array_end; ++fn) {
