@@ -20,12 +20,15 @@ namespace gles1 {
 
 int32 nativeRasterOffset = 0;
 
-static void ConvertToRGBA(Raster *raster, const uint8 *src, uint8 *dst, int32 w, int32 h)
+static inline bool IsPowerOfTwo(int32 v)
 {
-	uint32 fmt = raster->format & 0x0F00;
-	int32 count = w * h;
+	return v > 0 && (v & (v - 1)) == 0;
+}
+
+static void ConvertToRGBA(uint32 rwFmt, const uint8 *src, uint8 *dst, int32 count)
+{
+	uint32 fmt = rwFmt & 0x0F00;
 	if(fmt == Raster::C8888){
-		// BGRA -> RGBA or RGBA -> RGBA depending on platform; RW PC is BGRA
 		for(int32 i = 0; i < count; i++){
 			dst[i*4+0] = src[i*4+2];
 			dst[i*4+1] = src[i*4+1];
@@ -71,6 +74,101 @@ static void ConvertToRGBA(Raster *raster, const uint8 *src, uint8 *dst, int32 w,
 	}
 }
 
+static void Choose16BitFormat(uint32 rwFmt, const uint8 *rgba, int32 count, uint32 *outFmt, uint32 *outType, bool32 *outHasAlpha)
+{
+	(void)rwFmt;
+	// Always inspect decoded RGBA alpha channel (TXD headers for PAL8/DXT often report C565/C888 even with alpha)
+	bool hasZero = false;
+	bool hasPartial = false;
+	for(int32 i = 0; i < count; i++){
+		uint8 a = rgba[i*4 + 3];
+		if(a == 0){
+			hasZero = true;
+		}else if(a < 255){
+			hasPartial = true;
+			break;
+		}
+	}
+	if(!hasZero && !hasPartial){
+		*outFmt = GL_RGB;
+		*outType = GL_UNSIGNED_SHORT_5_6_5;
+		*outHasAlpha = 0;
+	}else if(!hasPartial){
+		*outFmt = GL_RGBA;
+		*outType = GL_UNSIGNED_SHORT_5_5_5_1;
+		*outHasAlpha = 1;
+	}else{
+		*outFmt = GL_RGBA;
+		*outType = GL_UNSIGNED_SHORT_4_4_4_4;
+		*outHasAlpha = 1;
+	}
+}
+
+static void PackRGBAto16(const uint8 *rgba, uint16 *dst16, int32 count, uint32 glType)
+{
+	if(glType == GL_UNSIGNED_SHORT_5_6_5){
+		for(int32 i = 0; i < count; i++){
+			uint32 r = rgba[i*4+0] >> 3;
+			uint32 g = rgba[i*4+1] >> 2;
+			uint32 b = rgba[i*4+2] >> 3;
+			dst16[i] = (uint16)((r << 11) | (g << 5) | b);
+		}
+	}else if(glType == GL_UNSIGNED_SHORT_5_5_5_1){
+		for(int32 i = 0; i < count; i++){
+			uint32 r = rgba[i*4+0] >> 3;
+			uint32 g = rgba[i*4+1] >> 3;
+			uint32 b = rgba[i*4+2] >> 3;
+			uint32 a = (rgba[i*4+3] >= 128) ? 1u : 0u;
+			dst16[i] = (uint16)((r << 11) | (g << 6) | (b << 1) | a);
+		}
+	}else{
+		for(int32 i = 0; i < count; i++){
+			uint32 r = rgba[i*4+0] >> 4;
+			uint32 g = rgba[i*4+1] >> 4;
+			uint32 b = rgba[i*4+2] >> 4;
+			uint32 a = rgba[i*4+3] >> 4;
+			dst16[i] = (uint16)((r << 12) | (g << 8) | (b << 4) | a);
+		}
+	}
+}
+
+static void DownsampleRGBA2x2(const uint8 *src, int32 sw, int32 sh, uint8 *dst, int32 dw, int32 dh)
+{
+	for(int32 y = 0; y < dh; y++){
+		int32 sy0 = (y * 2 < sh) ? (y * 2) : (sh - 1);
+		int32 sy1 = (sy0 + 1 < sh) ? (sy0 + 1) : sy0;
+		for(int32 x = 0; x < dw; x++){
+			int32 sx0 = (x * 2 < sw) ? (x * 2) : (sw - 1);
+			int32 sx1 = (sx0 + 1 < sw) ? (sx0 + 1) : sx0;
+			const uint8 *p00 = src + (sy0 * sw + sx0) * 4;
+			const uint8 *p10 = src + (sy0 * sw + sx1) * 4;
+			const uint8 *p01 = src + (sy1 * sw + sx0) * 4;
+			const uint8 *p11 = src + (sy1 * sw + sx1) * 4;
+			uint8 *d = dst + (y * dw + x) * 4;
+			d[0] = (uint8)((p00[0] + p10[0] + p01[0] + p11[0] + 2) >> 2);
+			d[1] = (uint8)((p00[1] + p10[1] + p01[1] + p11[1] + 2) >> 2);
+			d[2] = (uint8)((p00[2] + p10[2] + p01[2] + p11[2] + 2) >> 2);
+			d[3] = (uint8)((p00[3] + p10[3] + p01[3] + p11[3] + 2) >> 2);
+		}
+	}
+}
+
+static uint8 *AllocScratch(uint8 **buf, size_t *cap, size_t needed, size_t maxKeep, bool *tempAlloc)
+{
+	if(needed <= maxKeep){
+		if(*cap < needed){
+			if(*buf) rwFree(*buf);
+			size_t allocSz = needed < (64u * 1024u) ? (64u * 1024u) : needed;
+			*buf = (uint8*)rwMalloc(allocSz, MEMDUR_EVENT | ID_RASTERGL3);
+			*cap = *buf ? allocSz : 0;
+		}
+		*tempAlloc = false;
+		return *buf;
+	}
+	*tempAlloc = true;
+	return (uint8*)rwMalloc(needed, MEMDUR_FUNCTION | ID_RASTERGL3);
+}
+
 Raster *rasterCreate(Raster *raster)
 {
 	Gles1Raster *nat = GETGLES1RASTEREXT(raster);
@@ -83,11 +181,15 @@ Raster *rasterCreate(Raster *raster)
 
 	int32 type = raster->type;
 	if(type == Raster::NORMAL || type == Raster::TEXTURE){
-		nat->internalFormat = GL_RGBA;
-		nat->format         = GL_RGBA;
-		nat->type           = GL_UNSIGNED_BYTE;
-		nat->hasAlpha       = 1;
+		nat->internalFormat = GL_RGB;
+		nat->format         = GL_RGB;
+		nat->type           = GL_UNSIGNED_SHORT_5_6_5;
+		nat->hasAlpha       = 0;
 		nat->numLevels      = 1;
+		nat->minFilter      = GL_NEAREST;
+		nat->magFilter      = GL_NEAREST;
+		nat->addressU       = GL_REPEAT;
+		nat->addressV       = GL_REPEAT;
 
 		if(raster->depth == 0) raster->depth = 32;
 		raster->stride = raster->width * (raster->depth / 8);
@@ -95,8 +197,9 @@ Raster *rasterCreate(Raster *raster)
 		if(const IGLVtbl *gl = ZeeboGL()){
 			gl->glGenTextures(1, &nat->texid);
 			gl->glBindTexture(GL_TEXTURE_2D, nat->texid);
-			gl->glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-			gl->glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			notifyTextureBound(nat->texid);
+			gl->glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+			gl->glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 			gl->glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
 			gl->glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 		}
@@ -127,30 +230,39 @@ void rasterUnlock(Raster *raster, int32 level)
 		if(gl){
 			static uint8 *s_rgbaScratch = nil;
 			static size_t s_rgbaScratchCap = 0;
-			size_t rgbaSz = (size_t)raster->width * (size_t)raster->height * 4;
-			uint8 *rgba = nil;
-			bool tempAlloc = false;
-			if(rgbaSz <= 256u * 1024u){
-				if(s_rgbaScratchCap < rgbaSz){
-					if(s_rgbaScratch) rwFree(s_rgbaScratch);
-					size_t allocSz = rgbaSz < (64u * 1024u) ? (64u * 1024u) : rgbaSz;
-					s_rgbaScratch = (uint8*)rwMalloc(allocSz, MEMDUR_EVENT | ID_RASTERGL3);
-					s_rgbaScratchCap = s_rgbaScratch ? allocSz : 0;
-				}
-				rgba = s_rgbaScratch;
-			}else{
-				rgba = (uint8*)rwMalloc(rgbaSz, MEMDUR_FUNCTION | ID_RASTERGL3);
-				tempAlloc = true;
-			}
-			if(rgba){
-				ConvertToRGBA(raster, nat->pixels, rgba, raster->width, raster->height);
+			static uint8 *s_tex16Scratch = nil;
+			static size_t s_tex16ScratchCap = 0;
+
+			int32 count = raster->width * raster->height;
+			size_t rgbaSz = (size_t)count * 4u;
+			size_t tex16Sz = (size_t)count * 2u;
+			bool tempRgba = false, temp16 = false;
+			uint8 *rgba = AllocScratch(&s_rgbaScratch, &s_rgbaScratchCap, rgbaSz, 256u * 1024u, &tempRgba);
+			uint16 *tex16 = (uint16*)AllocScratch(&s_tex16Scratch, &s_tex16ScratchCap, tex16Sz, 128u * 1024u, &temp16);
+
+			if(rgba && tex16){
+				ConvertToRGBA(raster->format, nat->pixels, rgba, count);
+				uint32 glFmt = GL_RGB, glType = GL_UNSIGNED_SHORT_5_6_5;
+				bool32 hasAlpha = 0;
+				Choose16BitFormat(raster->format, rgba, count, &glFmt, &glType, &hasAlpha);
+				PackRGBAto16(rgba, tex16, count, glType);
+
+				nat->internalFormat = (int32)glFmt;
+				nat->format         = glFmt;
+				nat->type           = glType;
+				nat->hasAlpha       = hasAlpha;
+				nat->numLevels      = 1;
+
 				gl->glBindTexture(GL_TEXTURE_2D, nat->texid);
-				gl->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, raster->width, raster->height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
-				if(tempAlloc) rwFree(rgba);
+				notifyTextureBound(nat->texid);
+				gl->glTexImage2D(GL_TEXTURE_2D, 0, (int)glFmt, raster->width, raster->height, 0, glFmt, glType, tex16);
+
 				// Texture is now resident in GL; release CPU pixel copy to save Zeebo's 64MB heap
 				rwFree(nat->pixels);
 				nat->pixels = nil;
 			}
+			if(tempRgba && rgba) rwFree(rgba);
+			if(temp16 && tex16) rwFree(tex16);
 		}
 	}
 	raster->pixels = nil;
@@ -224,9 +336,54 @@ Image *rasterToImage(Raster *raster)
 	img->allocate();
 	Gles1Raster *nat = GETGLES1RASTEREXT(raster);
 	if(nat->pixels){
-		ConvertToRGBA(raster, nat->pixels, img->pixels, raster->width, raster->height);
+		ConvertToRGBA(raster->format, nat->pixels, img->pixels, raster->width * raster->height);
 	}
 	return img;
+}
+
+// Decode a single D3D/TXD mip level directly into an RGBA8888 buffer (R,G,B,A byte order)
+static bool DecodeD3DLevelToRGBA(const uint8 *buf, uint32 size, const uint8 *pal, int32 pallength,
+                                 uint32 format, int32 lw, int32 lh, int32 compression, uint8 *outRGBA)
+{
+	int32 count = lw * lh;
+	if(pallength != 0 && pal){
+		if(format & Raster::PAL4){
+			int32 maxPal = pallength;
+			for(int32 i = 0; i < count; i++){
+				uint32 byteIdx = (uint32)(i >> 1);
+				uint8 b = (byteIdx < size) ? buf[byteIdx] : 0;
+				uint8 idx = (i & 1) ? (b >> 4) : (b & 0xF);
+				if(idx >= maxPal) idx = 0;
+				outRGBA[i*4+0] = pal[idx*4+0];
+				outRGBA[i*4+1] = pal[idx*4+1];
+				outRGBA[i*4+2] = pal[idx*4+2];
+				outRGBA[i*4+3] = pal[idx*4+3];
+			}
+		}else{
+			int32 maxPal = pallength;
+			for(int32 i = 0; i < count; i++){
+				uint8 idx = ((uint32)i < size) ? buf[i] : 0;
+				if(idx >= maxPal) idx = 0;
+				outRGBA[i*4+0] = pal[idx*4+0];
+				outRGBA[i*4+1] = pal[idx*4+1];
+				outRGBA[i*4+2] = pal[idx*4+2];
+				outRGBA[i*4+3] = pal[idx*4+3];
+			}
+		}
+		return true;
+	}
+	if(compression){
+		Image *img = Image::create(lw, lh, 32);
+		if(!img) return false;
+		img->allocate();
+		img->setPixelsDXT(compression, (uint8*)buf);
+		// Keep exact channel convention as rasterFromImage + ConvertToRGBA (swap R/B)
+		ConvertToRGBA(Raster::C8888, img->pixels, outRGBA, count);
+		img->destroy();
+		return true;
+	}
+	ConvertToRGBA(format, buf, outRGBA, count);
+	return true;
 }
 
 static Raster *readD3DRasterLevels(Stream *stream, uint32 format, int32 width, int32 height, int32 depth, int32 numLevels, int32 type, int32 compression)
@@ -241,48 +398,128 @@ static Raster *readD3DRasterLevels(Stream *stream, uint32 format, int32 width, i
 		stream->read8(pal, 4 * pallength);
 	}
 
+	const bool useMipmaps = (numLevels > 1) && IsPowerOfTwo(width) && IsPowerOfTwo(height);
+	int32 rfmt = (format & 0x0F00) | (type & 0x07);
+	if((rfmt & 0x0F00) == 0) rfmt |= (depth == 16) ? Raster::C565 : Raster::C8888;
+	if(useMipmaps) rfmt |= Raster::MIPMAP;
+
 	Raster *raster = nil;
+	if(width > 0 && height > 0){
+		raster = Raster::create(width, height, depth > 0 ? depth : 32, rfmt);
+	}
+
+	const IGLVtbl *gl = ZeeboGL();
+	Gles1Raster *nat = raster ? GETGLES1RASTEREXT(raster) : nil;
+
+	static uint8 *s_mipRgbaA = nil;
+	static size_t s_mipRgbaACap = 0;
+	static uint8 *s_mipRgbaB = nil;
+	static size_t s_mipRgbaBCap = 0;
+	static uint8 *s_mipTex16 = nil;
+	static size_t s_mipTex16Cap = 0;
+
+	uint32 chosenFmt = GL_RGB;
+	uint32 chosenType = GL_UNSIGNED_SHORT_5_6_5;
+	bool32 chosenAlpha = 0;
+	int32  uploadedLevels = 0;
+	int32  lastW = width, lastH = height;
+	uint8 *lastRgba = nil;
+	bool   tempLastRgba = false;
+
+	int32 lw = width;
+	int32 lh = height;
 	for(int32 i = 0; i < numLevels; i++){
 		uint32 size = stream->readU32();
-		if(i > 0 || width <= 0 || height <= 0){
+		if(!raster || !nat || !nat->texid || !gl || (!useMipmaps && i > 0)){
 			stream->seek(size);
 			continue;
 		}
+
 		uint8 *buf = rwNewT(uint8, size, MEMDUR_FUNCTION | ID_IMAGE);
 		stream->read8(buf, size);
 
-		if(pallength != 0){
-			int32 imgDepth = (format & Raster::PAL4) ? 4 : 8;
-			Image *img = Image::create(width, height, imgDepth);
-			img->allocate();
-			uint32 copySz = size < (uint32)(img->stride * height) ? size : (uint32)(img->stride * height);
-			memcpy(img->pixels, buf, copySz);
-			int32 maxPal = (1 << imgDepth) * 4;
-			int32 srcPal = 4 * pallength;
-			memcpy(img->palette, pal, srcPal < maxPal ? srcPal : maxPal);
-			rwFree(buf);
-			raster = Raster::createFromImage(img);
-			img->destroy();
-		}else if(compression){
-			Image *img = Image::create(width, height, 32);
-			img->allocate();
-			img->setPixelsDXT(compression, buf);
-			rwFree(buf);
-			raster = Raster::createFromImage(img);
-			img->destroy();
-		}else{
-			int32 rfmt = (format & 0x0F00) | (type & 0x07);
-			if((rfmt & 0x0F00) == 0) rfmt |= (depth == 16) ? Raster::C565 : Raster::C8888;
-			raster = Raster::create(width, height, depth, rfmt);
-			if(raster){
-				uint8 *dst = raster->lock(0, Raster::LOCKWRITE | Raster::LOCKNOFETCH);
-				if(dst){
-					uint32 copySz = size < (uint32)(raster->stride * height) ? size : (uint32)(raster->stride * height);
-					memcpy(dst, buf, copySz);
-					raster->unlock(0);
-				}
+		int32 count = lw * lh;
+		bool tempRgba = false, temp16 = false;
+		uint8 *rgba = AllocScratch(&s_mipRgbaA, &s_mipRgbaACap, (size_t)count * 4u, 256u * 1024u, &tempRgba);
+		uint16 *tex16 = (uint16*)AllocScratch(&s_mipTex16, &s_mipTex16Cap, (size_t)count * 2u, 128u * 1024u, &temp16);
+
+		if(rgba && tex16 && DecodeD3DLevelToRGBA(buf, size, pal, pallength, (uint32)rfmt, lw, lh, compression, rgba)){
+			if(i == 0){
+				Choose16BitFormat((uint32)rfmt, rgba, count, &chosenFmt, &chosenType, &chosenAlpha);
+				nat->internalFormat = (int32)chosenFmt;
+				nat->format         = chosenFmt;
+				nat->type           = chosenType;
+				nat->hasAlpha       = chosenAlpha;
+				gl->glBindTexture(GL_TEXTURE_2D, nat->texid);
+				notifyTextureBound(nat->texid);
 			}
-			rwFree(buf);
+			PackRGBAto16(rgba, tex16, count, chosenType);
+			gl->glTexImage2D(GL_TEXTURE_2D, i, (int)chosenFmt, lw, lh, 0, chosenFmt, chosenType, tex16);
+			uploadedLevels = i + 1;
+			lastW = lw;
+			lastH = lh;
+
+			// Keep last level's RGBA only if we need to finish the mipchain down to 1x1
+			if(useMipmaps && i == numLevels - 1 && (lw > 1 || lh > 1)){
+				lastRgba = rgba;
+				tempLastRgba = tempRgba;
+				tempRgba = false; // ownership transferred until after tail generation
+			}
+		}
+
+		rwFree(buf);
+		if(tempRgba && rgba) rwFree(rgba);
+		if(temp16 && tex16) rwFree(tex16);
+
+		lw = (lw > 1) ? (lw >> 1) : 1;
+		lh = (lh > 1) ? (lh >> 1) : 1;
+	}
+
+	// OpenGL ES requires mipmap chains to be complete down to 1x1
+	if(raster && nat && nat->texid && gl && useMipmaps && uploadedLevels > 0 && lastRgba){
+		uint8 *curSrc = lastRgba;
+		bool   curTemp = tempLastRgba;
+		int32  cw = lastW;
+		int32  ch = lastH;
+		int32  lvl = uploadedLevels;
+		while(cw > 1 || ch > 1){
+			int32 nw = (cw > 1) ? (cw >> 1) : 1;
+			int32 nh = (ch > 1) ? (ch >> 1) : 1;
+			int32 ncount = nw * nh;
+			bool tempDst = false, temp16 = false;
+			uint8 *dst = (curSrc == s_mipRgbaA)
+				? AllocScratch(&s_mipRgbaB, &s_mipRgbaBCap, (size_t)ncount * 4u, 256u * 1024u, &tempDst)
+				: AllocScratch(&s_mipRgbaA, &s_mipRgbaACap, (size_t)ncount * 4u, 256u * 1024u, &tempDst);
+			uint16 *tex16 = (uint16*)AllocScratch(&s_mipTex16, &s_mipTex16Cap, (size_t)ncount * 2u, 128u * 1024u, &temp16);
+			if(!dst || !tex16){
+				if(tempDst && dst) rwFree(dst);
+				if(temp16 && tex16) rwFree(tex16);
+				break;
+			}
+			DownsampleRGBA2x2(curSrc, cw, ch, dst, nw, nh);
+			PackRGBAto16(dst, tex16, ncount, chosenType);
+			gl->glTexImage2D(GL_TEXTURE_2D, lvl, (int)chosenFmt, nw, nh, 0, chosenFmt, chosenType, tex16);
+			if(temp16) rwFree(tex16);
+			if(curTemp && curSrc) rwFree(curSrc);
+			curSrc = dst;
+			curTemp = tempDst;
+			cw = nw;
+			ch = nh;
+			lvl++;
+			uploadedLevels = lvl;
+		}
+		if(curTemp && curSrc) rwFree(curSrc);
+	}else if(tempLastRgba && lastRgba){
+		rwFree(lastRgba);
+	}
+
+	if(raster && nat && nat->texid && gl && uploadedLevels > 0){
+		nat->numLevels = uploadedLevels;
+		if(uploadedLevels > 1){
+			nat->minFilter = GL_NEAREST_MIPMAP_NEAREST;
+			nat->magFilter = GL_NEAREST;
+			gl->glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+			gl->glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 		}
 	}
 

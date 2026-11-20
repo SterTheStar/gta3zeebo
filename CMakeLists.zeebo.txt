@@ -102,6 +102,11 @@ target_compile_options(librw_zeebo PRIVATE
     -fno-exceptions
     -fno-rtti
     -fno-threadsafe-statics
+    -fsingle-precision-constant
+    -fno-math-errno
+    -fno-trapping-math
+    -ffunction-sections
+    -fdata-sections
 )
 
 # ---------------------------------------------------------------------------
@@ -184,6 +189,11 @@ target_compile_options(gta3zeebo.elf PRIVATE
     -fno-exceptions
     -fno-rtti
     -fno-threadsafe-statics
+    -fsingle-precision-constant
+    -fno-math-errno
+    -fno-trapping-math
+    -ffunction-sections
+    -fdata-sections
 )
 
 target_link_options(gta3zeebo.elf PRIVATE
@@ -195,6 +205,7 @@ target_link_options(gta3zeebo.elf PRIVATE
 if(ZEEBO_OBJCOPY)
     add_custom_command(TARGET gta3zeebo.elf POST_BUILD
         COMMAND ${ZEEBO_OBJCOPY} -O binary $<TARGET_FILE:gta3zeebo.elf> ${CMAKE_CURRENT_BINARY_DIR}/gta3zeebo.mod
-        COMMENT "Generating BREW flat binary gta3zeebo.mod"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_BINARY_DIR}/gta3zeebo.mod ${CMAKE_CURRENT_SOURCE_DIR}/dist/zeebo/gta3zeebo/gta3zeebo.mod
+        COMMENT "Generating BREW flat binary gta3zeebo.mod and syncing to dist/zeebo/gta3zeebo/"
     )
 endif()

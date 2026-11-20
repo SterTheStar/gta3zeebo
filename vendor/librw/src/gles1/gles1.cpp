@@ -16,6 +16,11 @@
 #include "rwgles1.h"
 #include "zeebo_gles1.h"
 
+extern "C" {
+uint32_t g_zeeboDrawCalls = 0;
+uint32_t g_zeeboTris = 0;
+}
+
 namespace rw {
 namespace gles1 {
 
@@ -33,6 +38,7 @@ struct RenderStateCache {
 	bool32   zTest;
 	bool32   zWrite;
 	bool32   vertexAlpha;
+	bool32   textureAlpha;
 	int32    srcBlend;
 	int32    dstBlend;
 	int32    cullMode;
@@ -55,6 +61,109 @@ struct RenderStateCache {
 };
 
 static RenderStateCache s_state;
+
+struct GLStateCache {
+	bool   texEnabled;
+	uint32 boundTexId;
+	bool   blendEnabled;
+	bool   arrVert;
+	bool   arrNorm;
+	bool   arrColor;
+	bool   arrTex;
+	bool   lighting;
+	bool   rescaleNormal;
+	bool   colorMaterial;
+	bool   colorValid;
+	uint32 lastColorRGBA;
+};
+
+static GLStateCache s_gl;
+
+static inline void UpdateBlendState(const IGLVtbl *gl)
+{
+	if(!gl) return;
+	bool want = (s_state.vertexAlpha != 0) || (s_state.textureAlpha != 0);
+	if(s_gl.blendEnabled != want){
+		s_gl.blendEnabled = want;
+		if(want) gl->glEnable(GL_BLEND);
+		else     gl->glDisable(GL_BLEND);
+	}
+}
+
+void notifyTextureBound(uint32 texid)
+{
+	s_gl.boundTexId = texid;
+}
+
+bool isTextureEnabled(void)
+{
+	return s_gl.texEnabled;
+}
+
+void setClientStates(bool vert, bool norm, bool color, bool tex)
+{
+	const IGLVtbl *gl = ZeeboGL();
+	if(!gl) return;
+	if(s_gl.arrVert != vert){
+		s_gl.arrVert = vert;
+		if(vert) gl->glEnableClientState(GL_VERTEX_ARRAY);
+		else     gl->glDisableClientState(GL_VERTEX_ARRAY);
+	}
+	if(s_gl.arrNorm != norm){
+		s_gl.arrNorm = norm;
+		if(norm) gl->glEnableClientState(GL_NORMAL_ARRAY);
+		else     gl->glDisableClientState(GL_NORMAL_ARRAY);
+	}
+	if(s_gl.arrColor != color){
+		s_gl.arrColor = color;
+		if(color) gl->glEnableClientState(GL_COLOR_ARRAY);
+		else      gl->glDisableClientState(GL_COLOR_ARRAY);
+	}
+	if(s_gl.arrTex != tex){
+		s_gl.arrTex = tex;
+		if(tex) gl->glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+		else    gl->glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+	}
+}
+
+void setLightingState(bool lighting, bool rescaleNormal, bool colorMaterial)
+{
+	const IGLVtbl *gl = ZeeboGL();
+	if(!gl) return;
+	if(s_gl.lighting != lighting){
+		s_gl.lighting = lighting;
+		if(lighting) gl->glEnable(GL_LIGHTING);
+		else         gl->glDisable(GL_LIGHTING);
+	}
+	if(s_gl.rescaleNormal != rescaleNormal){
+		s_gl.rescaleNormal = rescaleNormal;
+		if(rescaleNormal) gl->glEnable(GL_RESCALE_NORMAL);
+		else              gl->glDisable(GL_RESCALE_NORMAL);
+	}
+	if(s_gl.colorMaterial != colorMaterial){
+		s_gl.colorMaterial = colorMaterial;
+		if(colorMaterial) gl->glEnable(GL_COLOR_MATERIAL);
+		else              gl->glDisable(GL_COLOR_MATERIAL);
+	}
+}
+
+void setConstantColor(uint8 r, uint8 g, uint8 b, uint8 a)
+{
+	uint32 packed = ((uint32)r) | ((uint32)g << 8) | ((uint32)b << 16) | ((uint32)a << 24);
+	if(s_gl.colorValid && s_gl.lastColorRGBA == packed)
+		return;
+	s_gl.colorValid = true;
+	s_gl.lastColorRGBA = packed;
+	if(const IGLVtbl *gl = ZeeboGL()){
+		// Map 0..255 -> 0..65536 (exact: (v * 65536 + 127) / 255, fast: (v << 8) + v + (v >> 7))
+		gl->glColor4x(
+			(GLfixed)((uint32)r * 257u + ((uint32)r >> 7)),
+			(GLfixed)((uint32)g * 257u + ((uint32)g >> 7)),
+			(GLfixed)((uint32)b * 257u + ((uint32)b >> 7)),
+			(GLfixed)((uint32)a * 257u + ((uint32)a >> 7))
+		);
+	}
+}
 
 static uint32 BlendMap(int32 rwBlend)
 {
@@ -111,16 +220,17 @@ static bool InitEGL(int width, int height)
 
 	if(const IGLVtbl *gl = ZeeboGL()){
 		gl->glViewport(0, 0, s_screenW, s_screenH);
-		gl->glHint(GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST);
+		gl->glHint(GL_PERSPECTIVE_CORRECTION_HINT, GL_FASTEST);
 		gl->glEnable(GL_DEPTH_TEST);
 		gl->glDepthFunc(GL_LEQUAL);
-		gl->glEnable(GL_BLEND);
+		gl->glDisable(GL_BLEND);
 		gl->glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 		gl->glDisable(GL_CULL_FACE);
-		gl->glFrontFace(GL_CW);
+		gl->glFrontFace(GL_CCW);
 		gl->glTexEnvx(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
 		gl->glFogx(GL_FOG_MODE, 0x2601 /* GL_LINEAR */);
 	}
+	memset(&s_gl, 0, sizeof(s_gl));
 	return true;
 }
 
@@ -216,6 +326,7 @@ static void beginUpdate(Camera *cam)
 	for(int i = 0; i < 16; i++) fx[i] = ZeeboToFixed(vm[i]);
 	gl->glMatrixMode(GL_MODELVIEW);
 	gl->glLoadMatrixx(fx);
+	invalidateLightCache();
 
 	// Always program linear fog parameters so enabling GL_FOG mid-frame never falls back to GL_EXP
 	gl->glFogx(GL_FOG_MODE, 0x2601 /* GL_LINEAR */);
@@ -223,10 +334,10 @@ static void beginUpdate(Camera *cam)
 	gl->glFogx(GL_FOG_END,   ZeeboToFixed(cam->farPlane));
 	{
 		GLfixed fogCol[4] = {
-			ZeeboToFixed(((s_state.fogColor >> 16) & 0xFF) / 255.0f),
-			ZeeboToFixed(((s_state.fogColor >>  8) & 0xFF) / 255.0f),
-			ZeeboToFixed(((s_state.fogColor >>  0) & 0xFF) / 255.0f),
-			ZeeboToFixed(((s_state.fogColor >> 24) & 0xFF) / 255.0f)
+			(GLfixed)(((s_state.fogColor >> 16) & 0xFFu) * 257u),
+			(GLfixed)(((s_state.fogColor >>  8) & 0xFFu) * 257u),
+			(GLfixed)(((s_state.fogColor >>  0) & 0xFFu) * 257u),
+			(GLfixed)(((s_state.fogColor >> 24) & 0xFFu) * 257u)
 		};
 		gl->glFogxv(GL_FOG_COLOR, fogCol);
 	}
@@ -240,9 +351,6 @@ static void beginUpdate(Camera *cam)
 static void endUpdate(Camera *cam)
 {
 	(void)cam;
-	if(const IGLVtbl *gl = ZeeboGL()){
-		gl->glFlush();
-	}
 }
 
 static void clearCamera(Camera *cam, RGBA *col, uint32 mode)
@@ -304,7 +412,9 @@ static uint32 WrapMap(int32 addr)
 
 static uint32 FilterMap(int32 flt)
 {
-	return (flt == Texture::NEAREST || flt == Texture::MIPNEAREST) ? GL_NEAREST : GL_LINEAR;
+	(void)flt;
+	// Nearest-neighbor filtering (1 texel fetch/px vs 4 for bilinear) for Adreno 130 / Zeebo fillrate
+	return GL_NEAREST;
 }
 
 static void ApplyBoundTexParams(const IGLVtbl *gl, Raster *r)
@@ -312,9 +422,13 @@ static void ApplyBoundTexParams(const IGLVtbl *gl, Raster *r)
 	if(!gl || !r) return;
 	Gles1Raster *nat = GETGLES1RASTEREXT(r);
 	if(!nat->texid) return;
-	uint32 wrapU = WrapMap(s_state.texAddressU);
-	uint32 wrapV = WrapMap(s_state.texAddressV);
-	uint32 flt   = FilterMap(s_state.texFilter);
+	uint32 wrapU  = WrapMap(s_state.texAddressU);
+	uint32 wrapV  = WrapMap(s_state.texAddressV);
+	uint32 magFlt = FilterMap(s_state.texFilter);
+	uint32 minFlt = magFlt;
+	if(nat->numLevels > 1){
+		minFlt = (magFlt == GL_NEAREST) ? GL_NEAREST_MIPMAP_NEAREST : GL_LINEAR_MIPMAP_NEAREST;
+	}
 	if(nat->addressU != wrapU){
 		nat->addressU = wrapU;
 		gl->glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, (GLfixed)wrapU);
@@ -323,10 +437,13 @@ static void ApplyBoundTexParams(const IGLVtbl *gl, Raster *r)
 		nat->addressV = wrapV;
 		gl->glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, (GLfixed)wrapV);
 	}
-	if(nat->filterMode != flt){
-		nat->filterMode = flt;
-		gl->glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, (GLfixed)flt);
-		gl->glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, (GLfixed)flt);
+	if(nat->minFilter != minFlt){
+		nat->minFilter = minFlt;
+		gl->glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, (GLfixed)minFlt);
+	}
+	if(nat->magFilter != magFlt){
+		nat->magFilter = magFlt;
+		gl->glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, (GLfixed)magFlt);
 	}
 }
 
@@ -337,18 +454,41 @@ static void setRenderState(int32 state, void *pvalue)
 
 	switch(state){
 	case TEXTURERASTER:
+		if(s_state.textureRaster == (Texture*)pvalue){
+			// Still ensure boundTexId wasn't clobbered by a texture upload
+			Raster *r = (Raster*)pvalue;
+			if(r){
+				Gles1Raster *nat = GETGLES1RASTEREXT(r);
+				if(gl && s_gl.boundTexId != nat->texid){
+					gl->glBindTexture(GL_TEXTURE_2D, nat->texid);
+					s_gl.boundTexId = nat->texid;
+				}
+			}
+			break;
+		}
 		s_state.textureRaster = (Texture*)pvalue;
 		if(gl){
 			Raster *r = (Raster*)pvalue;
 			if(r){
 				Gles1Raster *nat = GETGLES1RASTEREXT(r);
-				gl->glEnable(GL_TEXTURE_2D);
-				gl->glBindTexture(GL_TEXTURE_2D, nat->texid);
+				s_state.textureAlpha = nat->hasAlpha ? 1 : 0;
+				if(!s_gl.texEnabled){
+					s_gl.texEnabled = true;
+					gl->glEnable(GL_TEXTURE_2D);
+				}
+				if(s_gl.boundTexId != nat->texid){
+					s_gl.boundTexId = nat->texid;
+					gl->glBindTexture(GL_TEXTURE_2D, nat->texid);
+				}
 				ApplyBoundTexParams(gl, r);
 			}else{
-				gl->glBindTexture(GL_TEXTURE_2D, 0);
-				gl->glDisable(GL_TEXTURE_2D);
+				s_state.textureAlpha = 0;
+				if(s_gl.texEnabled){
+					s_gl.texEnabled = false;
+					gl->glDisable(GL_TEXTURE_2D);
+				}
 			}
+			UpdateBlendState(gl);
 		}
 		break;
 	case TEXTUREADDRESS:
@@ -388,10 +528,7 @@ static void setRenderState(int32 state, void *pvalue)
 	case VERTEXALPHA:
 		if(s_state.vertexAlpha == (bool32)value) break;
 		s_state.vertexAlpha = (bool32)value;
-		if(gl){
-			if(value) gl->glEnable(GL_BLEND);
-			else      gl->glDisable(GL_BLEND);
-		}
+		UpdateBlendState(gl);
 		break;
 	case SRCBLEND:
 		if(s_state.srcBlend == (int32)value) break;
@@ -432,34 +569,37 @@ static void setRenderState(int32 state, void *pvalue)
 		}
 		break;
 	case FOGCOLOR:
+		if(s_state.fogColor == (uint32)value) break;
 		s_state.fogColor = (uint32)value;
 		if(gl){
 			GLfixed fogCol[4] = {
-				ZeeboToFixed(((s_state.fogColor >> 16) & 0xFF) / 255.0f),
-				ZeeboToFixed(((s_state.fogColor >>  8) & 0xFF) / 255.0f),
-				ZeeboToFixed(((s_state.fogColor >>  0) & 0xFF) / 255.0f),
-				ZeeboToFixed(((s_state.fogColor >> 24) & 0xFF) / 255.0f)
+				(GLfixed)(((s_state.fogColor >> 16) & 0xFFu) * 257u),
+				(GLfixed)(((s_state.fogColor >>  8) & 0xFFu) * 257u),
+				(GLfixed)(((s_state.fogColor >>  0) & 0xFFu) * 257u),
+				(GLfixed)(((s_state.fogColor >> 24) & 0xFFu) * 257u)
 			};
 			gl->glFogxv(GL_FOG_COLOR, fogCol);
 		}
 		break;
 	case ALPHATESTFUNC:
+		if(s_state.alphaTestFunc == (int32)value) break;
 		s_state.alphaTestFunc = (int32)value;
 		if(gl){
 			if(value == ALPHAGREATEREQUAL || value == ALPHALESS){
 				gl->glEnable(GL_ALPHA_TEST);
 				uint32 fn = (value == ALPHALESS) ? GL_LESS : GL_GEQUAL;
-				gl->glAlphaFuncx(fn, ZeeboToFixed(s_state.alphaTestRef / 255.0f));
+				gl->glAlphaFuncx(fn, (GLfixed)((uint32)s_state.alphaTestRef * 257u));
 			}else{
 				gl->glDisable(GL_ALPHA_TEST);
 			}
 		}
 		break;
 	case ALPHATESTREF:
+		if(s_state.alphaTestRef == (int32)value) break;
 		s_state.alphaTestRef = (int32)value;
-		if(gl && s_state.alphaTestFunc != ALPHAALWAYS){
+		if(gl && (s_state.alphaTestFunc == ALPHAGREATEREQUAL || s_state.alphaTestFunc == ALPHALESS)){
 			uint32 fn = (s_state.alphaTestFunc == ALPHALESS) ? GL_LESS : GL_GEQUAL;
-			gl->glAlphaFuncx(fn, ZeeboToFixed(s_state.alphaTestRef / 255.0f));
+			gl->glAlphaFuncx(fn, (GLfixed)((uint32)s_state.alphaTestRef * 257u));
 		}
 		break;
 	default:
@@ -586,7 +726,13 @@ void registerPlatformPlugins(void)
 		[](void *object, int32 offset, int32 size) -> void* {
 			(void)size;
 			Gles1Raster *nat = PLUGINOFFSET(Gles1Raster, object, offset);
+			if(s_state.textureRaster == (Texture*)object){
+				s_state.textureRaster = nil;
+			}
 			if(nat->texid){
+				if(s_gl.boundTexId == nat->texid){
+					s_gl.boundTexId = 0;
+				}
 				if(const IGLVtbl *gl = ZeeboGL()){
 					gl->glDeleteTextures(1, &nat->texid);
 				}

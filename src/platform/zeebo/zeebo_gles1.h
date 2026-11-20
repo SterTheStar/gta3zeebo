@@ -55,6 +55,7 @@ extern "C" {
 #define GL_DEPTH_TEST               0x0B71
 #define GL_STENCIL_TEST             0x0B90
 #define GL_NORMALIZE                0x0BA1
+#define GL_RESCALE_NORMAL           0x803A
 #define GL_ALPHA_TEST               0x0BC0
 #define GL_BLEND                    0x0BE2
 #define GL_SCISSOR_TEST             0x0C11
@@ -251,6 +252,13 @@ static inline const IGLVtbl* ZeeboGL(void) {
 
 static inline GLfixed ZeeboToFixed(float f) {
     return (GLfixed)(f * 65536.0f);
+}
+
+static inline int8_t ZeeboNormToByte(float n) {
+    int32_t v = (int32_t)(n * 127.0f);
+    if (v > 127) v = 127;
+    else if (v < -127) v = -127;
+    return (int8_t)v;
 }
 
 #ifdef __cplusplus

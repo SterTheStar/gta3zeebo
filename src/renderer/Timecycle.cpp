@@ -291,6 +291,11 @@ CTimeCycle::Update(void)
 
 	if(m_FogReduction != 0)
 		m_fCurrentFarClip = Max(m_fCurrentFarClip, m_FogReduction/64.0f * 650.0f);
+#ifdef __ZEEBO__
+	// Cap draw distance for Zeebo (Adreno 130) while keeping smooth fog fade-out
+	if(m_fCurrentFarClip > 240.0f) m_fCurrentFarClip = 240.0f;
+	if(m_fCurrentFogStart > m_fCurrentFarClip * 0.45f) m_fCurrentFogStart = m_fCurrentFarClip * 0.45f;
+#endif
 	m_nCurrentFogColourRed = (m_nCurrentSkyTopRed + 2*m_nCurrentSkyBottomRed) / 3;
 	m_nCurrentFogColourGreen = (m_nCurrentSkyTopGreen + 2*m_nCurrentSkyBottomGreen) / 3;
 	m_nCurrentFogColourBlue = (m_nCurrentSkyTopBlue + 2*m_nCurrentSkyBottomBlue) / 3;

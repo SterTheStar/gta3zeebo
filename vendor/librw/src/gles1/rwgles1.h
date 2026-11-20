@@ -26,7 +26,8 @@ struct Gles1Raster
 	bool32 hasAlpha;
 	int32  numLevels;
 	uint8 *pixels;
-	uint32 filterMode;
+	uint32 minFilter;
+	uint32 magFilter;
 	uint32 addressU;
 	uint32 addressV;
 };
@@ -148,6 +149,14 @@ void setMaterial(Material *mat, bool32 hasColor, bool32 hasTex);
 void setLights(World *world, Matrix *worldMat);
 void bindTexture(Texture *tex);
 void flushCache(void);
+
+// Internal GLES1 state cache helpers (shared across gles1.cpp / pipe / immed / raster)
+void notifyTextureBound(uint32 texid);
+void setClientStates(bool vert, bool norm, bool color, bool tex);
+void setLightingState(bool lighting, bool rescaleNormal, bool colorMaterial);
+void setConstantColor(uint8 r, uint8 g, uint8 b, uint8 a);
+void invalidateLightCache(void);
+bool isTextureEnabled(void);
 
 } // namespace gles1
 } // namespace rw

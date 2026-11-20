@@ -16,15 +16,13 @@
 #include "rwgles1.h"
 #include "zeebo_gles1.h"
 
+extern "C" {
+extern uint32_t g_zeeboDrawCalls;
+extern uint32_t g_zeeboTris;
+}
+
 namespace rw {
 namespace gles1 {
-
-struct Gles1Vertex {
-	float32 x, y, z;
-	float32 nx, ny, nz;
-	float32 r, g, b, a;
-	float32 u, v;
-};
 
 static void defaultUninstanceCB(Geometry *geo, InstanceDataHeader *header);
 
@@ -35,7 +33,9 @@ static void instanceNothing(Geometry *geo, InstanceDataHeader *header, bool32 re
 
 static void defaultInstanceCB(Geometry *geo, InstanceDataHeader *header, bool32 reinstance)
 {
-	if(reinstance) return;
+	if(reinstance){
+		defaultUninstanceCB(geo, header);
+	}
 
 	MeshHeader *meshh = geo->meshHeader;
 	header->serialNumber = meshh->serialNum;
@@ -47,46 +47,88 @@ static void defaultInstanceCB(Geometry *geo, InstanceDataHeader *header, bool32 
 	for(uint32 i = 0; i < header->numMeshes; i++)
 		totalIdx += meshes[i].numIndices;
 
+	V3d *pos  = geo->morphTargets[0].vertices;
+	V3d *norm = ((geo->flags & Geometry::NORMALS) != 0) ? geo->morphTargets[0].normals : nil;
+	RGBA *col = ((geo->flags & Geometry::PRELIT) != 0)  ? geo->colors : nil;
+	TexCoords *uv = (geo->numTexCoordSets > 0) ? geo->texCoords[0] : nil;
+
+	// Compact per-geometry 4-byte aligned native vertex layout:
+	//   pos:    3 x GLfixed (12 B) [always]
+	//   normal: 4 x int8    ( 4 B) [optional, GL_BYTE]
+	//   color:  4 x uint8   ( 4 B) [optional, GL_UNSIGNED_BYTE]
+	//   uv:     2 x GLfixed ( 8 B) [optional, GL_FIXED]
+	// Stride: 12..28 bytes (down from 48 bytes)
+	int32 off = 0;
+	header->posOffset = off;
+	off += 12;
+
+	if(norm){
+		header->normalOffset = off;
+		off += 4;
+	}else{
+		header->normalOffset = -1;
+	}
+
+	if(col){
+		header->colorOffset = off;
+		off += 4;
+	}else{
+		header->colorOffset = -1;
+	}
+
+	if(uv){
+		header->texCoordOffset = off;
+		off += 8;
+	}else{
+		header->texCoordOffset = -1;
+	}
+
 	header->totalNumIndex  = totalIdx;
 	header->totalNumVertex = geo->numVertices;
-	header->stride         = sizeof(Gles1Vertex);
-	header->posOffset      = 0;
-	header->normalOffset   = 12;
-	header->colorOffset    = 24;
-	header->texCoordOffset = 28;
+	header->stride         = (uint32)off;
 
 	header->indexBuffer  = (uint16*)rwMalloc(totalIdx * sizeof(uint16), MEMDUR_EVENT | ID_GEOMETRY);
-	header->vertexBuffer = (uint8*)rwMalloc(geo->numVertices * sizeof(Gles1Vertex), MEMDUR_EVENT | ID_GEOMETRY);
+	header->vertexBuffer = (uint8*)rwMalloc((size_t)geo->numVertices * (size_t)header->stride, MEMDUR_EVENT | ID_GEOMETRY);
 	header->inst         = (InstanceData*)rwMalloc(header->numMeshes * sizeof(InstanceData), MEMDUR_EVENT | ID_GEOMETRY);
 	if(!header->indexBuffer || !header->vertexBuffer || !header->inst){
 		defaultUninstanceCB(geo, header);
 		return;
 	}
 
-	// Pack vertices
-	Gles1Vertex *verts = (Gles1Vertex*)header->vertexBuffer;
-	V3d *pos  = geo->morphTargets[0].vertices;
-	V3d *norm = geo->morphTargets[0].normals;
-	RGBA *col = geo->colors;
-	TexCoords *uv = geo->texCoords[0];
+	const uint32 stride = header->stride;
+	const int32 normOff = header->normalOffset;
+	const int32 colOff  = header->colorOffset;
+	const int32 uvOff   = header->texCoordOffset;
+	uint8 *dst = header->vertexBuffer;
 
-	for(int32 i = 0; i < geo->numVertices; i++){
-		verts[i].x  = pos ? pos[i].x : 0.0f;
-		verts[i].y  = pos ? pos[i].y : 0.0f;
-		verts[i].z  = pos ? pos[i].z : 0.0f;
-		verts[i].nx = norm ? norm[i].x : 0.0f;
-		verts[i].ny = norm ? norm[i].y : 0.0f;
-		verts[i].nz = norm ? norm[i].z : 1.0f;
-		if(col){
-			verts[i].r = col[i].red   / 255.0f;
-			verts[i].g = col[i].green / 255.0f;
-			verts[i].b = col[i].blue  / 255.0f;
-			verts[i].a = col[i].alpha / 255.0f;
+	for(int32 i = 0; i < geo->numVertices; i++, dst += stride){
+		GLfixed *pDst = (GLfixed*)dst;
+		if(pos){
+			pDst[0] = ZeeboToFixed(pos[i].x);
+			pDst[1] = ZeeboToFixed(pos[i].y);
+			pDst[2] = ZeeboToFixed(pos[i].z);
 		}else{
-			verts[i].r = verts[i].g = verts[i].b = verts[i].a = 1.0f;
+			pDst[0] = pDst[1] = pDst[2] = 0;
 		}
-		verts[i].u = uv ? uv[i].u : 0.0f;
-		verts[i].v = uv ? uv[i].v : 0.0f;
+		if(normOff >= 0){
+			int8_t *nDst = (int8_t*)(dst + normOff);
+			nDst[0] = ZeeboNormToByte(norm[i].x);
+			nDst[1] = ZeeboNormToByte(norm[i].y);
+			nDst[2] = ZeeboNormToByte(norm[i].z);
+			nDst[3] = 0;
+		}
+		if(colOff >= 0){
+			uint8 *cDst = dst + colOff;
+			cDst[0] = col[i].red;
+			cDst[1] = col[i].green;
+			cDst[2] = col[i].blue;
+			cDst[3] = col[i].alpha;
+		}
+		if(uvOff >= 0){
+			GLfixed *tDst = (GLfixed*)(dst + uvOff);
+			tDst[0] = ZeeboToFixed(uv[i].u);
+			tDst[1] = ZeeboToFixed(uv[i].v);
+		}
 	}
 
 	uint32 idxOff = 0;
@@ -105,7 +147,7 @@ static void defaultInstanceCB(Geometry *geo, InstanceDataHeader *header, bool32 
 				}
 			}
 		}
-		inst->offset      = idxOff * sizeof(uint16);
+		inst->offset = idxOff * sizeof(uint16);
 
 		memcpy(&header->indexBuffer[idxOff], meshes[i].indices, meshes[i].numIndices * sizeof(uint16));
 		idxOff += meshes[i].numIndices;
@@ -121,6 +163,24 @@ static void defaultUninstanceCB(Geometry *geo, InstanceDataHeader *header)
 	header->indexBuffer  = nil;
 	header->vertexBuffer = nil;
 	header->inst         = nil;
+}
+
+// Per-camera-pass light cache to avoid redundant glLightxv / glEnable / glDisable spam
+struct LightCache {
+	bool    valid;
+	int     enabledCount;
+	GLfixed amb[3];
+	int     numDir;
+	Light  *dir[8];
+	int     numLoc;
+	Light  *loc[8];
+};
+
+static LightCache s_lightCache = { false, 8, {0,0,0}, 0, {nil}, 0, {nil} };
+
+void invalidateLightCache(void)
+{
+	s_lightCache.valid = false;
 }
 
 static void ApplyGles1Lights(const IGLVtbl *gl, Atomic *atomic)
@@ -148,14 +208,34 @@ static void ApplyGles1Lights(const IGLVtbl *gl, Atomic *atomic)
 		ZeeboToFixed(lightData.ambient.blue),
 		ZeeboToFixed(1.0f)
 	};
-	gl->glLightModelxv(0x0B53 /* GL_LIGHT_MODEL_AMBIENT */, amb);
+
+	// Fast path: if the light set and ambient color match the previous atomic, skip all GL calls
+	if(s_lightCache.valid &&
+	   s_lightCache.amb[0] == amb[0] &&
+	   s_lightCache.amb[1] == amb[1] &&
+	   s_lightCache.amb[2] == amb[2] &&
+	   s_lightCache.numDir == lightData.numDirectionals &&
+	   s_lightCache.numLoc == lightData.numLocals){
+		bool same = true;
+		for(int i = 0; i < lightData.numDirectionals; i++){
+			if(s_lightCache.dir[i] != lightData.directionals[i]){ same = false; break; }
+		}
+		if(same){
+			for(int i = 0; i < lightData.numLocals; i++){
+				if(s_lightCache.loc[i] != lightData.locals[i]){ same = false; break; }
+			}
+		}
+		if(same) return;
+	}
+
+	gl->glLightModelxv(GL_LIGHT_MODEL_AMBIENT, amb);
 
 	int lightIdx = 0;
-	static const GLfixed kZero[4] = { 0, 0, 0, ZeeboToFixed(1.0f) };
+	static const GLfixed kZero[4] = { 0, 0, 0, 65536 };
 	for(int i = 0; i < lightData.numDirectionals && lightIdx < 8; i++){
 		Light *l = lightData.directionals[i];
 		if(!l || !l->getFrame()) continue;
-		uint32 lid = 0x4000u + (uint32)lightIdx; // GL_LIGHT0 + i
+		uint32 lid = GL_LIGHT0 + (uint32)lightIdx;
 		V3d at = l->getFrame()->getLTM()->at;
 		GLfixed pos[4] = {
 			ZeeboToFixed(-at.x),
@@ -167,66 +247,74 @@ static void ApplyGles1Lights(const IGLVtbl *gl, Atomic *atomic)
 			ZeeboToFixed(l->color.red),
 			ZeeboToFixed(l->color.green),
 			ZeeboToFixed(l->color.blue),
-			ZeeboToFixed(1.0f)
+			65536
 		};
-		gl->glEnable(lid);
-		gl->glLightxv(lid, 0x1203 /* GL_POSITION */, pos);
-		gl->glLightxv(lid, 0x1201 /* GL_DIFFUSE */,  diff);
-		gl->glLightxv(lid, 0x1200 /* GL_AMBIENT */,  kZero);
-		gl->glLightxv(lid, 0x1202 /* GL_SPECULAR */, kZero);
+		if(lightIdx >= s_lightCache.enabledCount || !s_lightCache.valid)
+			gl->glEnable(lid);
+		gl->glLightxv(lid, GL_POSITION, pos);
+		gl->glLightxv(lid, GL_DIFFUSE,  diff);
+		gl->glLightxv(lid, GL_AMBIENT,  kZero);
+		gl->glLightxv(lid, GL_SPECULAR, kZero);
 		lightIdx++;
 	}
 	for(int i = 0; i < lightData.numLocals && lightIdx < 8; i++){
 		Light *l = lightData.locals[i];
 		if(!l || !l->getFrame()) continue;
-		uint32 lid = 0x4000u + (uint32)lightIdx;
+		uint32 lid = GL_LIGHT0 + (uint32)lightIdx;
 		V3d p = l->getFrame()->getLTM()->pos;
 		GLfixed pos[4] = {
 			ZeeboToFixed(p.x),
 			ZeeboToFixed(p.y),
 			ZeeboToFixed(p.z),
-			ZeeboToFixed(1.0f)
+			65536
 		};
 		GLfixed diff[4] = {
 			ZeeboToFixed(l->color.red),
 			ZeeboToFixed(l->color.green),
 			ZeeboToFixed(l->color.blue),
-			ZeeboToFixed(1.0f)
+			65536
 		};
-		gl->glEnable(lid);
-		gl->glLightxv(lid, 0x1203 /* GL_POSITION */, pos);
-		gl->glLightxv(lid, 0x1201 /* GL_DIFFUSE */,  diff);
-		gl->glLightxv(lid, 0x1200 /* GL_AMBIENT */,  kZero);
-		gl->glLightxv(lid, 0x1202 /* GL_SPECULAR */, kZero);
+		if(lightIdx >= s_lightCache.enabledCount || !s_lightCache.valid)
+			gl->glEnable(lid);
+		gl->glLightxv(lid, GL_POSITION, pos);
+		gl->glLightxv(lid, GL_DIFFUSE,  diff);
+		gl->glLightxv(lid, GL_AMBIENT,  kZero);
+		gl->glLightxv(lid, GL_SPECULAR, kZero);
 		lightIdx++;
 	}
-	for(; lightIdx < 8; lightIdx++){
-		gl->glDisable(0x4000u + (uint32)lightIdx);
+	int disableTo = s_lightCache.valid ? s_lightCache.enabledCount : 8;
+	for(int i = lightIdx; i < disableTo; i++){
+		gl->glDisable(GL_LIGHT0 + (uint32)i);
 	}
+
+	s_lightCache.valid = true;
+	s_lightCache.enabledCount = lightIdx;
+	s_lightCache.amb[0] = amb[0];
+	s_lightCache.amb[1] = amb[1];
+	s_lightCache.amb[2] = amb[2];
+	s_lightCache.numDir = lightData.numDirectionals;
+	for(int i = 0; i < lightData.numDirectionals; i++) s_lightCache.dir[i] = lightData.directionals[i];
+	s_lightCache.numLoc = lightData.numLocals;
+	for(int i = 0; i < lightData.numLocals; i++) s_lightCache.loc[i] = lightData.locals[i];
 }
 
-static void RenderMeshesWithVerts(const IGLVtbl *gl, Atomic *atomic, InstanceDataHeader *header, Gles1Vertex *v)
+static void RenderMeshesWithVerts(const IGLVtbl *gl, Atomic *atomic, InstanceDataHeader *header, uint8 *vertBuf)
 {
 	Geometry *geo = atomic->geometry;
 	Frame *frame = atomic->getFrame();
 	Matrix *ltm = frame ? frame->getLTM() : nil;
 
-	bool hasNorm  = (geo->flags & Geometry::NORMALS) != 0;
-	bool hasColor = (geo->flags & Geometry::PRELIT) != 0;
-	bool hasTex   = (geo->numTexCoordSets > 0);
+	bool hasNorm  = (header->normalOffset >= 0);
+	bool hasColor = (header->colorOffset >= 0);
+	bool hasTex   = (header->texCoordOffset >= 0);
 	bool useLight = (geo->flags & Geometry::LIGHT) != 0 && hasNorm;
 
 	gl->glMatrixMode(GL_MODELVIEW);
 	if(useLight){
 		// Set world-space lights while GL_MODELVIEW still holds only the view matrix
 		ApplyGles1Lights(gl, atomic);
-		gl->glEnable(GL_LIGHTING);
-		gl->glEnable(GL_COLOR_MATERIAL);
-		gl->glEnable(GL_NORMALIZE);
-	}else{
-		gl->glDisable(GL_LIGHTING);
-		gl->glDisable(GL_NORMALIZE);
 	}
+	setLightingState(useLight, useLight, useLight && hasColor);
 
 	if(ltm){
 		gl->glPushMatrix();
@@ -238,48 +326,35 @@ static void RenderMeshesWithVerts(const IGLVtbl *gl, Atomic *atomic, InstanceDat
 		gl->glMultMatrixx(fx);
 	}
 
-	gl->glEnableClientState(GL_VERTEX_ARRAY);
-	gl->glVertexPointer(3, GL_FLOAT, sizeof(Gles1Vertex), &v[0].x);
+	const int stride = (int)header->stride;
+	setClientStates(true, useLight, hasColor, hasTex);
 
-	if(hasNorm){
-		gl->glEnableClientState(GL_NORMAL_ARRAY);
-		gl->glNormalPointer(GL_FLOAT, sizeof(Gles1Vertex), &v[0].nx);
-	}else{
-		gl->glDisableClientState(GL_NORMAL_ARRAY);
+	gl->glVertexPointer(3, GL_FIXED, stride, vertBuf + header->posOffset);
+	if(useLight){
+		gl->glNormalPointer(GL_BYTE, stride, vertBuf + header->normalOffset);
 	}
-
 	if(hasColor){
-		gl->glEnableClientState(GL_COLOR_ARRAY);
-		gl->glColorPointer(4, GL_FLOAT, sizeof(Gles1Vertex), &v[0].r);
-	}else{
-		gl->glDisableClientState(GL_COLOR_ARRAY);
+		gl->glColorPointer(4, GL_UNSIGNED_BYTE, stride, vertBuf + header->colorOffset);
 	}
-
 	if(hasTex){
-		gl->glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-		gl->glTexCoordPointer(2, GL_FLOAT, sizeof(Gles1Vertex), &v[0].u);
-	}else{
-		gl->glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+		gl->glTexCoordPointer(2, GL_FIXED, stride, vertBuf + header->texCoordOffset);
 	}
 
 	for(uint32 i = 0; i < header->numMeshes; i++){
 		InstanceData *inst = &header->inst[i];
 		Material *mat = inst->material;
 		if(mat){
-			SetRenderState(VERTEXALPHA, (inst->vertexAlpha || mat->color.alpha != 0xFF) ? 1 : 0);
+			bool texHasAlpha = (mat->texture && mat->texture->raster &&
+			                    GETGLES1RASTEREXT(mat->texture->raster)->hasAlpha);
+			SetRenderState(VERTEXALPHA, (inst->vertexAlpha || mat->color.alpha != 0xFF || texHasAlpha) ? 1 : 0);
 			if(!hasColor){
-				gl->glColor4x(
-					ZeeboToFixed(mat->color.red   / 255.0f),
-					ZeeboToFixed(mat->color.green / 255.0f),
-					ZeeboToFixed(mat->color.blue  / 255.0f),
-					ZeeboToFixed(mat->color.alpha / 255.0f)
-				);
+				setConstantColor(mat->color.red, mat->color.green, mat->color.blue, mat->color.alpha);
 			}
 			if(mat->texture && mat->texture->raster && hasTex){
-				SetRenderState(TEXTURERASTER, mat->texture->raster);
 				SetRenderState(TEXTUREADDRESSU, mat->texture->getAddressU());
 				SetRenderState(TEXTUREADDRESSV, mat->texture->getAddressV());
 				SetRenderState(TEXTUREFILTER,   mat->texture->getFilter());
+				SetRenderState(TEXTURERASTER,   mat->texture->raster);
 			}else{
 				SetRenderState(TEXTURERASTER, nil);
 			}
@@ -287,14 +362,11 @@ static void RenderMeshesWithVerts(const IGLVtbl *gl, Atomic *atomic, InstanceDat
 
 		uint16 *idx = (uint16*)((uint8*)header->indexBuffer + inst->offset);
 		gl->glDrawElements(header->primType, inst->numIndex, GL_UNSIGNED_SHORT, idx);
+		g_zeeboDrawCalls++;
+		g_zeeboTris += (header->primType == GL_TRIANGLE_STRIP)
+			? (inst->numIndex > 2 ? inst->numIndex - 2 : 0)
+			: (inst->numIndex / 3);
 	}
-
-	gl->glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-	gl->glDisableClientState(GL_COLOR_ARRAY);
-	gl->glDisableClientState(GL_NORMAL_ARRAY);
-	gl->glDisableClientState(GL_VERTEX_ARRAY);
-	gl->glDisable(GL_LIGHTING);
-	gl->glDisable(GL_NORMALIZE);
 
 	if(ltm){
 		gl->glPopMatrix();
@@ -305,12 +377,12 @@ static void defaultRenderCB(Atomic *atomic, InstanceDataHeader *header)
 {
 	const IGLVtbl *gl = ZeeboGL();
 	if(!gl || !header || !header->vertexBuffer || !header->indexBuffer) return;
-	RenderMeshesWithVerts(gl, atomic, header, (Gles1Vertex*)header->vertexBuffer);
+	RenderMeshesWithVerts(gl, atomic, header, header->vertexBuffer);
 }
 
 static Matrix s_skinMatrices[64];
-static Gles1Vertex *s_skinScratch = nil;
-static int32 s_skinScratchCap = 0;
+static uint8 *s_skinScratch = nil;
+static size_t s_skinScratchCap = 0;
 
 static void skinRenderCB(Atomic *atomic, InstanceDataHeader *header)
 {
@@ -320,7 +392,7 @@ static void skinRenderCB(Atomic *atomic, InstanceDataHeader *header)
 	Geometry *geo = atomic->geometry;
 	Skin *skin = Skin::get(geo);
 	if(!skin || !skin->indices || !skin->weights || !skin->inverseMatrices){
-		RenderMeshesWithVerts(gl, atomic, header, (Gles1Vertex*)header->vertexBuffer);
+		RenderMeshesWithVerts(gl, atomic, header, header->vertexBuffer);
 		return;
 	}
 
@@ -349,39 +421,106 @@ static void skinRenderCB(Atomic *atomic, InstanceDataHeader *header)
 			s_skinMatrices[i].setIdentity();
 	}
 
-	int32 nVerts = (int32)header->totalNumVertex;
-	if(nVerts > s_skinScratchCap){
+	const int32  nVerts = (int32)header->totalNumVertex;
+	const uint32 stride = header->stride;
+	const size_t needed = (size_t)nVerts * (size_t)stride;
+	if(needed > s_skinScratchCap){
 		if(s_skinScratch) rwFree(s_skinScratch);
-		s_skinScratch = (Gles1Vertex*)rwMalloc((size_t)nVerts * sizeof(Gles1Vertex), MEMDUR_EVENT | ID_SKIN);
-		s_skinScratchCap = s_skinScratch ? nVerts : 0;
+		s_skinScratch = (uint8*)rwMalloc(needed, MEMDUR_EVENT | ID_SKIN);
+		s_skinScratchCap = s_skinScratch ? needed : 0;
 	}
 	if(!s_skinScratch){
-		RenderMeshesWithVerts(gl, atomic, header, (Gles1Vertex*)header->vertexBuffer);
+		RenderMeshesWithVerts(gl, atomic, header, header->vertexBuffer);
 		return;
 	}
 
-	const Gles1Vertex *src = (const Gles1Vertex*)header->vertexBuffer;
-	for(int32 i = 0; i < nVerts; i++){
-		s_skinScratch[i] = src[i];
-		float32 px = 0.0f, py = 0.0f, pz = 0.0f;
-		float32 nx = 0.0f, ny = 0.0f, nz = 0.0f;
+	// Bulk-copy static attributes (colors, UVs) once
+	memcpy(s_skinScratch, header->vertexBuffer, needed);
+
+	const int32 normOff = header->normalOffset;
+	const bool  doNorm  = ((geo->flags & Geometry::LIGHT) != 0) && (normOff >= 0);
+	const V3d  *srcPos  = geo->morphTargets[0].vertices;
+	const V3d  *srcNorm = doNorm ? geo->morphTargets[0].normals : nil;
+	const uint8 *srcRaw = header->vertexBuffer;
+	uint8 *dst = s_skinScratch;
+
+	for(int32 i = 0; i < nVerts; i++, dst += stride, srcRaw += stride){
+		float32 sx, sy, sz;
+		if(srcPos){
+			sx = srcPos[i].x; sy = srcPos[i].y; sz = srcPos[i].z;
+		}else{
+			const GLfixed *fp = (const GLfixed*)srcRaw;
+			sx = fp[0] * (1.0f / 65536.0f);
+			sy = fp[1] * (1.0f / 65536.0f);
+			sz = fp[2] * (1.0f / 65536.0f);
+		}
+
 		const uint8   *idx = &skin->indices[i * 4];
 		const float32 *wt  = &skin->weights[i * 4];
-		for(int b = 0; b < 4; b++){
-			float32 w = wt[b];
-			if(w <= 0.0f) continue;
-			uint8 bi = idx[b];
-			if(bi >= numBones) continue;
-			const Matrix &m = s_skinMatrices[bi];
-			px += w * (src[i].x * m.right.x + src[i].y * m.up.x + src[i].z * m.at.x + m.pos.x);
-			py += w * (src[i].x * m.right.y + src[i].y * m.up.y + src[i].z * m.at.y + m.pos.y);
-			pz += w * (src[i].x * m.right.z + src[i].y * m.up.z + src[i].z * m.at.z + m.pos.z);
-			nx += w * (src[i].nx * m.right.x + src[i].ny * m.up.x + src[i].nz * m.at.x);
-			ny += w * (src[i].nx * m.right.y + src[i].ny * m.up.y + src[i].nz * m.at.y);
-			nz += w * (src[i].nx * m.right.z + src[i].ny * m.up.z + src[i].nz * m.at.z);
+		float32 px, py, pz;
+
+		// Fast path for single-bone vertices (~75% of GTA III ped vertices)
+		if(wt[0] >= 0.999f && idx[0] < numBones){
+			const Matrix &m = s_skinMatrices[idx[0]];
+			px = sx * m.right.x + sy * m.up.x + sz * m.at.x + m.pos.x;
+			py = sx * m.right.y + sy * m.up.y + sz * m.at.y + m.pos.y;
+			pz = sx * m.right.z + sy * m.up.z + sz * m.at.z + m.pos.z;
+			if(doNorm){
+				float32 snx, sny, snz;
+				if(srcNorm){
+					snx = srcNorm[i].x; sny = srcNorm[i].y; snz = srcNorm[i].z;
+				}else{
+					const int8_t *np = (const int8_t*)(srcRaw + normOff);
+					snx = np[0] * (1.0f / 127.0f);
+					sny = np[1] * (1.0f / 127.0f);
+					snz = np[2] * (1.0f / 127.0f);
+				}
+				int8_t *nDst = (int8_t*)(dst + normOff);
+				nDst[0] = ZeeboNormToByte(snx * m.right.x + sny * m.up.x + snz * m.at.x);
+				nDst[1] = ZeeboNormToByte(snx * m.right.y + sny * m.up.y + snz * m.at.y);
+				nDst[2] = ZeeboNormToByte(snx * m.right.z + sny * m.up.z + snz * m.at.z);
+			}
+		}else{
+			px = py = pz = 0.0f;
+			float32 nx = 0.0f, ny = 0.0f, nz = 0.0f;
+			float32 snx = 0.0f, sny = 0.0f, snz = 0.0f;
+			if(doNorm){
+				if(srcNorm){
+					snx = srcNorm[i].x; sny = srcNorm[i].y; snz = srcNorm[i].z;
+				}else{
+					const int8_t *np = (const int8_t*)(srcRaw + normOff);
+					snx = np[0] * (1.0f / 127.0f);
+					sny = np[1] * (1.0f / 127.0f);
+					snz = np[2] * (1.0f / 127.0f);
+				}
+			}
+			for(int b = 0; b < 4; b++){
+				float32 w = wt[b];
+				if(w <= 0.0f) continue;
+				uint8 bi = idx[b];
+				if(bi >= numBones) continue;
+				const Matrix &m = s_skinMatrices[bi];
+				px += w * (sx * m.right.x + sy * m.up.x + sz * m.at.x + m.pos.x);
+				py += w * (sx * m.right.y + sy * m.up.y + sz * m.at.y + m.pos.y);
+				pz += w * (sx * m.right.z + sy * m.up.z + sz * m.at.z + m.pos.z);
+				if(doNorm){
+					nx += w * (snx * m.right.x + sny * m.up.x + snz * m.at.x);
+					ny += w * (snx * m.right.y + sny * m.up.y + snz * m.at.y);
+					nz += w * (snx * m.right.z + sny * m.up.z + snz * m.at.z);
+				}
+			}
+			if(doNorm){
+				int8_t *nDst = (int8_t*)(dst + normOff);
+				nDst[0] = ZeeboNormToByte(nx);
+				nDst[1] = ZeeboNormToByte(ny);
+				nDst[2] = ZeeboNormToByte(nz);
+			}
 		}
-		s_skinScratch[i].x  = px; s_skinScratch[i].y  = py; s_skinScratch[i].z  = pz;
-		s_skinScratch[i].nx = nx; s_skinScratch[i].ny = ny; s_skinScratch[i].nz = nz;
+
+		GLfixed *pDst = (GLfixed*)dst;
+		pDst[0] = ZeeboToFixed(px);
+		pDst[1] = ZeeboToFixed(py);
+		pDst[2] = ZeeboToFixed(pz);
 	}
 
 	RenderMeshesWithVerts(gl, atomic, header, s_skinScratch);

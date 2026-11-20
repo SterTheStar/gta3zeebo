@@ -74,6 +74,8 @@ static void FrameTimerCallback(void* pUser)
     uint32_t elapsed = Zeebo_TimeMs() - startMs;
 
     if (g_Zeebo.bRunning && g_Zeebo.pShell) {
+        // Target 33 ms (~30 fps) while always yielding at least 8 ms so the
+        // BREW / Zeebx event & presentation loop is never starved.
         int32_t delay = (elapsed >= 25u) ? 8 : (int32_t)(33u - elapsed);
         ISHELL_SetTimer(g_Zeebo.pShell, delay, FrameTimerCallback, NULL);
     }
