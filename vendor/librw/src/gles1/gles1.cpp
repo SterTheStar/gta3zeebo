@@ -48,6 +48,8 @@ struct RenderStateCache {
 	float32  fogDensity;
 	int32    alphaTestFunc;
 	int32    alphaTestRef;
+	bool32   gsAlphaTest;
+	int32    gsAlphaTestRef;
 	int32    shadeMode;
 	bool32   texPerspective;
 	int32    stencilEnable;
@@ -66,6 +68,9 @@ struct GLStateCache {
 	bool   texEnabled;
 	uint32 boundTexId;
 	bool   blendEnabled;
+	bool   alphaTestEnabled;
+	uint32 lastAlphaFunc;
+	GLfixed lastAlphaRef;
 	bool   arrVert;
 	bool   arrNorm;
 	bool   arrColor;
@@ -94,6 +99,29 @@ static inline void UpdateDepthState(const IGLVtbl *gl)
 	}
 }
 
+static inline void UpdateAlphaTestState(const IGLVtbl *gl)
+{
+	if(!gl) return;
+	bool hasAlpha = (s_state.vertexAlpha != 0) || (s_state.textureAlpha != 0);
+	bool want = hasAlpha && (s_state.alphaTestFunc == ALPHAGREATEREQUAL || s_state.alphaTestFunc == ALPHALESS);
+	if(s_gl.alphaTestEnabled != want){
+		s_gl.alphaTestEnabled = want;
+		if(want) gl->glEnable(GL_ALPHA_TEST);
+		else     gl->glDisable(GL_ALPHA_TEST);
+	}
+	if(want){
+		uint32 fn = (s_state.alphaTestFunc == ALPHALESS) ? GL_LESS : GL_GEQUAL;
+		int32 r = s_state.alphaTestRef;
+		if(r < 0) r = 0; else if(r > 255) r = 255;
+		GLfixed ref = (GLfixed)((uint32)r * 257u + ((uint32)r >> 7));
+		if(s_gl.lastAlphaFunc != fn || s_gl.lastAlphaRef != ref){
+			s_gl.lastAlphaFunc = fn;
+			s_gl.lastAlphaRef  = ref;
+			gl->glAlphaFuncx(fn, ref);
+		}
+	}
+}
+
 static inline void UpdateBlendState(const IGLVtbl *gl)
 {
 	if(!gl) return;
@@ -103,6 +131,7 @@ static inline void UpdateBlendState(const IGLVtbl *gl)
 		if(want) gl->glEnable(GL_BLEND);
 		else     gl->glDisable(GL_BLEND);
 	}
+	UpdateAlphaTestState(gl);
 }
 
 void notifyTextureBound(uint32 texid)
@@ -133,6 +162,10 @@ void setClientStates(bool vert, bool norm, bool color, bool tex)
 		s_gl.arrColor = color;
 		if(color) gl->glEnableClientState(GL_COLOR_ARRAY);
 		else      gl->glDisableClientState(GL_COLOR_ARRAY);
+	}
+	// Drawing with GL_COLOR_ARRAY clobbers GL_CURRENT_COLOR in GLES 1.1; invalidate constant color cache
+	if(color){
+		s_gl.colorValid = false;
 	}
 	if(s_gl.arrTex != tex){
 		s_gl.arrTex = tex;
@@ -206,7 +239,7 @@ static bool InitEGL(int width, int height)
 		return false;
 
 	const IEGLVtbl *egl = g_Zeebo.pEGL->pvt;
-	s_eglDisplay = egl->eglGetDisplay(ZEEBO_EGL_DEFAULT_DISPLAY);
+	s_eglDisplay = egl->eglGetDisplay(g_Zeebo.pDisplay ? (int)(uintptr_t)g_Zeebo.pDisplay : ZEEBO_EGL_DEFAULT_DISPLAY);
 	if(!s_eglDisplay) return false;
 
 	int major = 0, minor = 0;
@@ -225,6 +258,11 @@ static bool InitEGL(int width, int height)
 		return false;
 
 	s_eglSurface = egl->eglCreateWindowSurface(s_eglDisplay, cfg, NULL, NULL);
+	if(!s_eglSurface){
+		void *nativeWin = Zeebo_GetNativeWindow();
+		if(nativeWin)
+			s_eglSurface = egl->eglCreateWindowSurface(s_eglDisplay, cfg, nativeWin, NULL);
+	}
 	if(!s_eglSurface) return false;
 
 	s_eglContext = egl->eglCreateContext(s_eglDisplay, cfg, ZEEBO_EGL_NO_CONTEXT, NULL);
@@ -240,6 +278,7 @@ static bool InitEGL(int width, int height)
 		gl->glDepthFunc(GL_LEQUAL);
 		gl->glDisable(GL_BLEND);
 		gl->glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		gl->glDisable(GL_ALPHA_TEST);
 		gl->glDisable(GL_CULL_FACE);
 		gl->glFrontFace(GL_CCW);
 		gl->glTexEnvx(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
@@ -276,6 +315,8 @@ static void initStateDefaults(void)
 	s_state.texFilter    = Texture::LINEAR;
 	s_state.alphaTestFunc = ALPHAGREATEREQUAL;
 	s_state.alphaTestRef  = 0;
+	s_state.gsAlphaTest   = 0;
+	s_state.gsAlphaTestRef = 128;
 	s_state.shadeMode    = 0;
 	s_state.fogType      = 0;
 	s_state.fogDensity   = 1.0f;
@@ -597,23 +638,18 @@ static void setRenderState(int32 state, void *pvalue)
 	case ALPHATESTFUNC:
 		if(s_state.alphaTestFunc == (int32)value) break;
 		s_state.alphaTestFunc = (int32)value;
-		if(gl){
-			if(value == ALPHAGREATEREQUAL || value == ALPHALESS){
-				gl->glEnable(GL_ALPHA_TEST);
-				uint32 fn = (value == ALPHALESS) ? GL_LESS : GL_GEQUAL;
-				gl->glAlphaFuncx(fn, (GLfixed)((uint32)s_state.alphaTestRef * 257u));
-			}else{
-				gl->glDisable(GL_ALPHA_TEST);
-			}
-		}
+		UpdateAlphaTestState(gl);
 		break;
 	case ALPHATESTREF:
 		if(s_state.alphaTestRef == (int32)value) break;
 		s_state.alphaTestRef = (int32)value;
-		if(gl && (s_state.alphaTestFunc == ALPHAGREATEREQUAL || s_state.alphaTestFunc == ALPHALESS)){
-			uint32 fn = (s_state.alphaTestFunc == ALPHALESS) ? GL_LESS : GL_GEQUAL;
-			gl->glAlphaFuncx(fn, (GLfixed)((uint32)s_state.alphaTestRef * 257u));
-		}
+		UpdateAlphaTestState(gl);
+		break;
+	case GSALPHATEST:
+		s_state.gsAlphaTest = (bool32)value;
+		break;
+	case GSALPHATESTREF:
+		s_state.gsAlphaTestRef = (int32)value;
 		break;
 	default:
 		break;
@@ -638,6 +674,8 @@ static void *getRenderState(int32 state)
 	case FOGCOLOR:       return (void*)(uintptr)s_state.fogColor;
 	case ALPHATESTFUNC:  return (void*)(uintptr)s_state.alphaTestFunc;
 	case ALPHATESTREF:   return (void*)(uintptr)s_state.alphaTestRef;
+	case GSALPHATEST:    return (void*)(uintptr)s_state.gsAlphaTest;
+	case GSALPHATESTREF: return (void*)(uintptr)s_state.gsAlphaTestRef;
 	default:             return nil;
 	}
 }
