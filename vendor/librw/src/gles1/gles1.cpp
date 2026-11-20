@@ -239,7 +239,11 @@ static bool InitEGL(int width, int height)
 		return false;
 
 	const IEGLVtbl *egl = g_Zeebo.pEGL->pvt;
+#ifdef AEE_SIMULATOR
+	s_eglDisplay = egl->eglGetDisplay(ZEEBO_EGL_DEFAULT_DISPLAY);
+#else
 	s_eglDisplay = egl->eglGetDisplay(g_Zeebo.pDisplay ? (int)(uintptr_t)g_Zeebo.pDisplay : ZEEBO_EGL_DEFAULT_DISPLAY);
+#endif
 	if(!s_eglDisplay) return false;
 
 	int major = 0, minor = 0;
@@ -800,7 +804,7 @@ void registerPlatformPlugins(void)
 			}
 			return object;
 		},
-		[](void *dst, const void *src, int32 offset, int32 size) -> void* {
+		[](void *dst, void *src, int32 offset, int32 size) -> void* {
 			(void)dst; (void)src; (void)offset; (void)size;
 			return dst;
 		}

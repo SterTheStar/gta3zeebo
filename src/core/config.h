@@ -329,7 +329,7 @@ enum Config {
 //#define PS2_ALTERNATIVE_CARSPLASH // unused on PS2
 
 // Pad
-#if !defined(RW_GL3) && defined(_WIN32)
+#if !defined(RW_GL3) && !defined(__ZEEBO__) && defined(_WIN32)
 #define XINPUT
 #endif
 #if defined XINPUT || (defined RW_GL3 && !defined LIBRW_SDL2 && !defined GTA_HANDHELD)

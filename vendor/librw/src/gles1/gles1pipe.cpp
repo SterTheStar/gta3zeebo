@@ -408,18 +408,66 @@ static void RenderMeshesWithVerts(const IGLVtbl *gl, Atomic *atomic, InstanceDat
 				SetRenderState(TEXTUREADDRESSU, mat->texture->getAddressU());
 				SetRenderState(TEXTUREADDRESSV, mat->texture->getAddressV());
 				SetRenderState(TEXTUREFILTER,   mat->texture->getFilter());
-				SetRenderState(TEXTURERASTER,   mat->texture->raster);
+				SetRenderState(TEXTURERASTER,   (uint32)(uintptr_t)mat->texture->raster);
 			}else{
 				SetRenderState(TEXTURERASTER, nil);
 			}
 		}
 
 		uint16 *idx = (uint16*)((uint8*)header->indexBuffer + inst->offset);
-		gl->glDrawElements(header->primType, inst->numIndex, GL_UNSIGNED_SHORT, idx);
-		g_zeeboDrawCalls++;
-		g_zeeboTris += (header->primType == GL_TRIANGLE_STRIP)
+		uint32 triCount = (header->primType == GL_TRIANGLE_STRIP)
 			? (inst->numIndex > 2 ? inst->numIndex - 2 : 0)
 			: (inst->numIndex / 3);
+
+		// PS2 GS dual-pass alpha test emulation for partial-alpha geometry (4444 textures,
+		// vertex alpha, or translucent materials) so semi-transparent pixels don't write to Z
+		// and cut out transparent objects behind them. Pure 1-bit 5551 cutouts stay single-pass.
+		bool doGsAlpha = false;
+		bool skipPass1 = false;
+		if(mat && GetRenderState(GSALPHATEST) && GetRenderState(ZWRITEENABLE)){
+			bool hasVertOrMatAlpha = inst->vertexAlpha || (mat->color.alpha != 0xFF);
+			bool hasTexPartialAlpha = false;
+			if(mat->texture && mat->texture->raster && hasTex){
+				Gles1Raster *nat = GETGLES1RASTEREXT(mat->texture->raster);
+				if(nat->hasAlpha && nat->type == GL_UNSIGNED_SHORT_4_4_4_4){
+					hasTexPartialAlpha = true;
+				}
+			}
+			if(hasVertOrMatAlpha || hasTexPartialAlpha){
+				doGsAlpha = true;
+				if(!inst->vertexAlpha && !hasTexPartialAlpha && mat->color.alpha < (int32)GetRenderState(GSALPHATESTREF)){
+					skipPass1 = true;
+				}
+			}
+		}
+
+		if(doGsAlpha){
+			uint32 oldFunc = GetRenderState(ALPHATESTFUNC);
+			uint32 oldRef  = GetRenderState(ALPHATESTREF);
+			uint32 gsRef   = GetRenderState(GSALPHATESTREF);
+
+			if(!skipPass1){
+				SetRenderState(ALPHATESTFUNC, ALPHAGREATEREQUAL);
+				SetRenderState(ALPHATESTREF, gsRef);
+				gl->glDrawElements(header->primType, inst->numIndex, GL_UNSIGNED_SHORT, idx);
+				g_zeeboDrawCalls++;
+				g_zeeboTris += triCount;
+			}
+			SetRenderState(ALPHATESTFUNC, ALPHALESS);
+			SetRenderState(ALPHATESTREF, gsRef);
+			SetRenderState(ZWRITEENABLE, 0);
+			gl->glDrawElements(header->primType, inst->numIndex, GL_UNSIGNED_SHORT, idx);
+			g_zeeboDrawCalls++;
+			g_zeeboTris += triCount;
+
+			SetRenderState(ZWRITEENABLE, 1);
+			SetRenderState(ALPHATESTFUNC, oldFunc);
+			SetRenderState(ALPHATESTREF, oldRef);
+		}else{
+			gl->glDrawElements(header->primType, inst->numIndex, GL_UNSIGNED_SHORT, idx);
+			g_zeeboDrawCalls++;
+			g_zeeboTris += triCount;
+		}
 	}
 
 	if(ltm){
@@ -596,8 +644,8 @@ void *destroyGles1NativeData(void *object, int32 offset, int32 size)
 void ObjPipeline::init(void)
 {
 	this->rw::ObjPipeline::init(PLATFORM_GL3);
-	this->impl.instance   = (void (*)(ObjPipeline*, Atomic*))nil;
-	this->impl.uninstance = (void (*)(ObjPipeline*, Atomic*))nil;
+	this->impl.instance   = nil;
+	this->impl.uninstance = nil;
 	this->impl.render     = [](rw::ObjPipeline *pipe, Atomic *atomic) {
 		ObjPipeline *p = (ObjPipeline*)pipe;
 		Geometry *geo = atomic->geometry;

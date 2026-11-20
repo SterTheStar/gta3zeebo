@@ -98,7 +98,7 @@ void FileTimeToSystemTime(time_t* writeTime, SYSTEMTIME* out) {
 	tm *ptm = gmtime(writeTime);
 	tmToSystemTime(ptm, out);
 }
-#elif defined(__ZEEBO__)
+#elif defined(__ZEEBO__) && !defined(_WIN32)
 HANDLE FindFirstFile(const char* pathname, WIN32_FIND_DATA* firstfile) {
 	(void)pathname; (void)firstfile;
 	return NULL;

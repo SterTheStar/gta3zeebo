@@ -504,6 +504,9 @@ static inline void* Zeebo_GetNativeWindow(void)
 }
 
 // Entry point called by BREW / zeebx-emu loader
+#ifdef AEE_SIMULATOR
+__declspec(dllexport)
+#endif
 int AEEMod_Load(IShell* ps, void* ph, IModule** ppMod);
 
 // Frame pump & event callbacks implemented in main.cpp / input.cpp

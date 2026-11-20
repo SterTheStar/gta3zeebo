@@ -18,7 +18,7 @@ enum eWinVersion
 // As long as WITHWINDOWS isn't defined / <Windows.h> isn't included, we only need type definitions so let's include <IntSafe.h>.
 // NOTE: It's perfectly fine to include <Windows.h> here, but it can increase build size and time in *some* conditions, and maybe substantially in future if we'll use crossplatform.h more.
 #ifndef _INC_WINDOWS
-	#ifndef __MWERKS__
+	#if !defined(__MWERKS__) && !defined(__ZEEBO__)
 		#include <IntSafe.h>
 	#else
 		#include <Windows.h>
@@ -28,6 +28,9 @@ enum eWinVersion
 #include "win.h"
 #endif
 extern DWORD _dwOperatingSystemVersion;
+#ifdef __ZEEBO__
+char *casepath(char const *path, bool checkPathFirst = true);
+#endif
 #define fcaseopen fopen
 #define caserename rename
 #else

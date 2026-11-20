@@ -7,6 +7,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(gta3_zeebo C CXX ASM)
 
+option(ZEEBO_SIM "Build x86 DLL for Qualcomm BREW Simulator" OFF)
+
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -93,22 +95,32 @@ target_compile_definitions(librw_zeebo PUBLIC
     RW_GLES1=1
 )
 
-target_compile_options(librw_zeebo PRIVATE
-    -O2
-    -w
-    -fpermissive
-    -fsigned-char
-    -fno-strict-aliasing
-    -fno-exceptions
-    -fno-rtti
-    -fno-threadsafe-statics
-    -fsingle-precision-constant
-    -fno-math-errno
-    -fno-trapping-math
-    -ffunction-sections
-    -fdata-sections
-    -mword-relocations
-)
+if(ZEEBO_SIM)
+    target_compile_definitions(librw_zeebo PUBLIC
+        AEE_SIMULATOR=1
+        _CRT_SECURE_NO_WARNINGS=1
+        WIN32_LEAN_AND_MEAN=1
+        NOMINMAX=1
+    )
+    target_compile_options(librw_zeebo PRIVATE /W0 /EHsc)
+else()
+    target_compile_options(librw_zeebo PRIVATE
+        -O2
+        -w
+        -fpermissive
+        -fsigned-char
+        -fno-strict-aliasing
+        -fno-exceptions
+        -fno-rtti
+        -fno-threadsafe-statics
+        -fsingle-precision-constant
+        -fno-math-errno
+        -fno-trapping-math
+        -ffunction-sections
+        -fdata-sections
+        -mword-relocations
+    )
+endif()
 
 # ---------------------------------------------------------------------------
 # 2. re3 sources (excluding Win32 / GLFW / POSIX pthreads / OpenAL / MSS)
@@ -162,70 +174,100 @@ foreach(HDR ${RE3_HEADERS})
 endforeach()
 list(REMOVE_DUPLICATES RE3_INCLUDES)
 
-add_executable(gta3zeebo.elf ${RE3_ZEEBO_SOURCES})
+if(ZEEBO_SIM)
+    list(REMOVE_ITEM RE3_ZEEBO_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/zeebo/syscalls.cpp")
 
-target_link_libraries(gta3zeebo.elf PRIVATE librw_zeebo)
+    add_library(gta3zeebo SHARED ${RE3_ZEEBO_SOURCES})
 
-target_include_directories(gta3zeebo.elf PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/vendor/pl_mpeg
-    ${RE3_INCLUDES}
-)
+    target_link_libraries(gta3zeebo PRIVATE librw_zeebo)
 
-target_compile_definitions(gta3zeebo.elf PRIVATE
-    __ZEEBO__=1
-    RW_GLES1=1
-    LIBRW=1
-    NDEBUG=1
-    CMAKE_BUILD=1
-    USE_OUR_VERSIONING=1
-    CMAKE_NO_AUTOLINK=1
-)
-
-target_compile_options(gta3zeebo.elf PRIVATE
-    -O2
-    -w
-    -fpermissive
-    -fsigned-char
-    -fno-strict-aliasing
-    -fno-strict-overflow
-    -fno-exceptions
-    -fno-rtti
-    -fno-threadsafe-statics
-    -fsingle-precision-constant
-    -fno-math-errno
-    -fno-trapping-math
-    -ffunction-sections
-    -fdata-sections
-    -mword-relocations
-)
-
-find_program(ZEEBO_ELF2MOD elf2mod
-    PATHS "C:/Users/Esther/AppData/Local/Programs/brew-sdk/toolset/Toolset 7.10 Rev 12.0.1549664/bin"
-)
-
-if(ZEEBO_ELF2MOD)
-    target_link_options(gta3zeebo.elf PRIVATE
-        -T${CMAKE_CURRENT_SOURCE_DIR}/tools/zeebo/elf2mod.x
-        -nostartfiles
-        -Wl,--entry=AEEMod_Load
-        -Wl,--emit-relocs
-        -Wl,--gc-sections
+    target_include_directories(gta3zeebo PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/pl_mpeg
+        ${RE3_INCLUDES}
     )
-    add_custom_command(TARGET gta3zeebo.elf POST_BUILD
-        COMMAND "${ZEEBO_ELF2MOD}" -output ${CMAKE_CURRENT_BINARY_DIR}/gta3zeebo.mod $<TARGET_FILE:gta3zeebo.elf>
-        COMMENT "Generating relocatable BREW module gta3zeebo.mod via elf2mod"
+
+    target_compile_definitions(gta3zeebo PRIVATE
+        __ZEEBO__=1
+        AEE_SIMULATOR=1
+        RW_GLES1=1
+        LIBRW=1
+        NDEBUG=1
+        CMAKE_BUILD=1
+        USE_OUR_VERSIONING=1
+        CMAKE_NO_AUTOLINK=1
+        _CRT_SECURE_NO_WARNINGS=1
+        WIN32_LEAN_AND_MEAN=1
+        NOMINMAX=1
     )
+
+    target_compile_options(gta3zeebo PRIVATE /W0 /EHsc)
 else()
-    target_link_options(gta3zeebo.elf PRIVATE
-        -T${CMAKE_CURRENT_SOURCE_DIR}/tools/zeebo/zeebo_mod.ld
-        -nostartfiles
-        -Wl,--gc-sections
+    add_executable(gta3zeebo.elf ${RE3_ZEEBO_SOURCES})
+
+    target_link_libraries(gta3zeebo.elf PRIVATE librw_zeebo)
+
+    target_include_directories(gta3zeebo.elf PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/pl_mpeg
+        ${RE3_INCLUDES}
     )
-    if(ZEEBO_OBJCOPY)
-        add_custom_command(TARGET gta3zeebo.elf POST_BUILD
-            COMMAND ${ZEEBO_OBJCOPY} -O binary $<TARGET_FILE:gta3zeebo.elf> ${CMAKE_CURRENT_BINARY_DIR}/gta3zeebo.mod
-            COMMENT "Generating BREW flat binary gta3zeebo.mod"
+
+    target_compile_definitions(gta3zeebo.elf PRIVATE
+        __ZEEBO__=1
+        RW_GLES1=1
+        LIBRW=1
+        NDEBUG=1
+        CMAKE_BUILD=1
+        USE_OUR_VERSIONING=1
+        CMAKE_NO_AUTOLINK=1
+    )
+
+    target_compile_options(gta3zeebo.elf PRIVATE
+        -O2
+        -w
+        -fpermissive
+        -fsigned-char
+        -fno-strict-aliasing
+        -fno-strict-overflow
+        -fno-exceptions
+        -fno-rtti
+        -fno-threadsafe-statics
+        -fsingle-precision-constant
+        -fno-math-errno
+        -fno-trapping-math
+        -ffunction-sections
+        -fdata-sections
+        -mword-relocations
+    )
+
+    find_program(ZEEBO_ELF2MOD elf2mod
+        PATHS "C:/Users/Esther/AppData/Local/Programs/brew-sdk/toolset/Toolset 7.10 Rev 12.0.1549664/bin"
+    )
+
+    if(ZEEBO_ELF2MOD)
+        target_link_options(gta3zeebo.elf PRIVATE
+            -T${CMAKE_CURRENT_SOURCE_DIR}/tools/zeebo/elf2mod.x
+            -nostartfiles
+            -Wl,--entry=AEEMod_Load
+            -Wl,--emit-relocs
+            -Wl,--gc-sections
         )
+        add_custom_command(TARGET gta3zeebo.elf POST_BUILD
+            COMMAND "${ZEEBO_ELF2MOD}" -output ${CMAKE_CURRENT_BINARY_DIR}/gta3zeebo.mod $<TARGET_FILE:gta3zeebo.elf>
+            COMMENT "Generating relocatable BREW module gta3zeebo.mod via elf2mod"
+        )
+    else()
+        target_link_options(gta3zeebo.elf PRIVATE
+            -T${CMAKE_CURRENT_SOURCE_DIR}/tools/zeebo/zeebo_mod.ld
+            -nostartfiles
+            -Wl,--gc-sections
+        )
+        if(ZEEBO_OBJCOPY)
+            add_custom_command(TARGET gta3zeebo.elf POST_BUILD
+                COMMAND ${ZEEBO_OBJCOPY} -O binary $<TARGET_FILE:gta3zeebo.elf> ${CMAKE_CURRENT_BINARY_DIR}/gta3zeebo.mod
+                COMMENT "Generating BREW flat binary gta3zeebo.mod"
+            )
+        endif()
     endif()
 endif()

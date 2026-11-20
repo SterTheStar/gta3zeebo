@@ -32,7 +32,17 @@ bool isTextureEnabled(void);
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+DWORD _dwOperatingSystemVersion = 0;
+#ifdef _MSC_VER
+int strcasecmp(const char *str1, const char *str2)
+{
+    return _strcmpi(str1, str2);
+}
+#endif
+#else
 long _dwOperatingSystemVersion = 0;
+#endif
 size_t _dwMemAvailPhys = 64 * 1024 * 1024;
 RwUInt32 gGameState = 0;
 

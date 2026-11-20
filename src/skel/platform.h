@@ -11,7 +11,7 @@ extern "C"
 {
 #endif                          /* __cplusplus */
 
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(__ZEEBO__)
 extern RwUInt32 psTimer(void);
 #else
 extern double psTimer(void);

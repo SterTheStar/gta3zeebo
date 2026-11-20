@@ -4,6 +4,25 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#ifdef AEE_SIMULATOR
+#include <windows.h>
+static void SimSetModuleCwd(void)
+{
+    HMODULE hm = NULL;
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           (LPCSTR)&SimSetModuleCwd, &hm) && hm) {
+        char path[MAX_PATH];
+        DWORD len = GetModuleFileNameA(hm, path, MAX_PATH);
+        if (len > 0 && len < MAX_PATH) {
+            char* slash = strrchr(path, '\\');
+            if (slash) {
+                *slash = '\0';
+                SetCurrentDirectoryA(path);
+            }
+        }
+    }
+}
+#endif
 
 ZeeboRuntime g_Zeebo = { 0 };
 
@@ -223,17 +242,22 @@ static const IModuleVtbl s_moduleVtbl = {
     Module_FreeResources,
 };
 
+#ifndef AEE_SIMULATOR
 extern uint8_t __bss_start__[];
 extern uint8_t __bss_end__[];
 typedef void (*InitFn)(void);
 extern InitFn __init_array_start[];
 extern InitFn __init_array_end[];
+#endif
 
 static AEEHelperFuncs* ResolveHelpers(void* ph)
 {
     if (ph) {
         return (AEEHelperFuncs*)ph;
     }
+#ifdef AEE_SIMULATOR
+    return NULL;
+#else
     uintptr_t addr = ((uintptr_t)&AEEMod_Load) & ~(uintptr_t)3u;
     for (int i = 0; i < 256; ++i) {
         const uint32_t* p = (const uint32_t*)(addr - (uintptr_t)(i * 4));
@@ -242,18 +266,28 @@ static AEEHelperFuncs* ResolveHelpers(void* ph)
         }
     }
     return *(((AEEHelperFuncs* const*)(uintptr_t)&AEEMod_Load) - 1);
+#endif
 }
 
+#ifdef AEE_SIMULATOR
+extern "C" __declspec(dllexport)
+#else
 extern "C" __attribute__((section(".text.entry")))
+#endif
 int AEEMod_Load(IShell* pIShell, void* ph, IModule** ppMod)
 {
+#ifdef AEE_SIMULATOR
+    SimSetModuleCwd();
+#endif
     if (!ppMod) {
         return EBADPARM;
     }
 
+#ifndef AEE_SIMULATOR
     for (uint8_t* p = __bss_start__; p < __bss_end__; ++p) {
         *p = 0;
     }
+#endif
 
     memset(&g_Zeebo, 0, sizeof(g_Zeebo));
     g_Zeebo.pShell = pIShell;
@@ -262,11 +296,13 @@ int AEEMod_Load(IShell* pIShell, void* ph, IModule** ppMod)
         g_Zeebo.pHelpers->pfnDbgPrintf("[BREW] AEEMod_Load start\n");
     }
 
+#ifndef AEE_SIMULATOR
     for (InitFn* fn = __init_array_start; fn < __init_array_end; ++fn) {
         if (*fn) {
             (*fn)();
         }
     }
+#endif
 
     if (!g_Zeebo.pHelpers || !g_Zeebo.pHelpers->pfnMalloc) {
         return EFAILED;
