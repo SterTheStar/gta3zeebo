@@ -32,7 +32,7 @@ static int32 s_sfxRawSize = 0;
 #define ZEEBO_SFX_CACHE_SLOTS 48
 #define ZEEBO_SFX_CACHE_MAX_BYTES (2 * 1024 * 1024)
 #define ZEEBO_MAX_SINGLE_SFX_BYTES (512 * 1024)
-#define ZEEBO_MAX_ACTIVE_SFX_VOICES 14
+#define ZEEBO_MAX_ACTIVE_SFX_VOICES 24
 
 struct SfxCacheEntry {
 	uint32 sfxId;
@@ -201,16 +201,13 @@ static int ComputeChannelBrewVol(const ZeeboSfxChannel& ch, uint8 masterVol, uin
 	// OpenAL / DirectSound inverse-distance attenuation (AL_INVERSE_DISTANCE_CLAMPED)
 	if (ch.is3D && ch.maxDist > 0.01f) {
 		float dist = sqrtf(ch.posX * ch.posX + ch.posY * ch.posY + ch.posZ * ch.posZ);
-		float refDist = (ch.minDist > 0.5f) ? ch.minDist : 0.5f;
+		float refDist = (ch.minDist > 1.5f) ? ch.minDist : 1.5f;
 		if (dist >= ch.maxDist) {
 			v = 0.0f;
 		} else if (dist > refDist) {
 			float att = refDist / dist;
-			// Smoothly taper off to 0 near maxDist so distant sounds don't pop
-			float edge = (dist - refDist) / (ch.maxDist - refDist);
-			att *= (1.0f - edge * edge);
-			if (att < 0.0f) att = 0.0f;
-			v *= att;
+			// Perceptual curve so mid-distance voices/SFX don't drop too quietly in BREW's 0..100 scale
+			v *= sqrtf(att);
 		}
 	}
 	int bv = (int)(v * 100.0f + 0.5f);
@@ -233,13 +230,15 @@ static void ReapFinishedAndLimitVoices(uint8 masterVol, uint8 fadeVol)
 	}
 	while (activeCount >= ZEEBO_MAX_ACTIVE_SFX_VOICES) {
 		int victim = -1;
-		int lowestVol = 1000;
+		int lowestScore = 100000;
 		uint32 oldestTick = 0xFFFFFFFFu;
 		for (int i = 0; i < NUM_CHANNELS; i++) {
 			if (s_channels[i].media) {
 				int bv = ComputeChannelBrewVol(s_channels[i], masterVol, fadeVol);
-				if (bv < lowestVol || (bv == lowestVol && s_channels[i].startTick < oldestTick)) {
-					lowestVol = bv;
+				// Prefer stealing looping 3D ambient/engine SFX over 2D channels or one-shot voices
+				int score = bv + (s_channels[i].is3D ? 0 : 10000) + ((s_channels[i].loopCount != 0) ? 200 : 0);
+				if (score < lowestScore || (score == lowestScore && s_channels[i].startTick < oldestTick)) {
+					lowestScore = score;
 					oldestTick = s_channels[i].startTick;
 					victim = i;
 				}
