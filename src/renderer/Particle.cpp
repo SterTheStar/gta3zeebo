@@ -17,7 +17,11 @@
 #include "debugmenu.h"
 
 
+#ifdef __ZEEBO__
+#define MAX_PARTICLES_ON_SCREEN   (192)
+#else
 #define MAX_PARTICLES_ON_SCREEN   (1000)
+#endif
 
 
 //(5)
@@ -1547,7 +1551,14 @@ void CParticle::Render()
 			
 			if ( frames != nil )
 			{
+#ifdef __ZEEBO__
+				int32 animIdx = 0;
+				if ( psystem->m_nFinalAnimationFrame != 0 )
+					animIdx = (int32)((CTimer::GetFrameCounter() >> 2) % (uint32)(psystem->m_nFinalAnimationFrame + 1));
+				RwRaster *curFrame = frames[animIdx];
+#else
 				RwRaster *curFrame = *frames;
+#endif
 				if ( curFrame != prevFrame )
 				{
 					CSprite::FlushSpriteBuffer();
@@ -1557,14 +1568,40 @@ void CParticle::Render()
 			}
 		}
 		
+#ifdef __ZEEBO__
+		int32 zeeboDrawn = 0;
+		int32 zeeboLimit = 24;
+		switch ( psystem->m_Type ) {
+		case PARTICLE_FLAME:
+		case PARTICLE_CARFLAME:
+		case PARTICLE_CARFLAME_SMOKE:
+		case PARTICLE_FIREBALL:
+		case PARTICLE_FIREBALL_SMOKE:
+		case PARTICLE_EXPLOSION_MFAST:
+		case PARTICLE_EXPLOSION_MEDIUM:
+		case PARTICLE_EXPLOSION_LARGE:
+		case PARTICLE_ENGINE_SMOKE:
+		case PARTICLE_ENGINE_SMOKE2:
+		case PARTICLE_ENGINE_STEAM:
+			zeeboLimit = 12;
+			break;
+		default:
+			break;
+		}
+#endif
 		while ( particle != nil )
 		{
+#ifdef __ZEEBO__
+			if ( zeeboDrawn >= zeeboLimit )
+				break;
+#endif
 			bool canDraw = true;
 #ifdef PC_PARTICLE
 
 			if ( particle->m_nAlpha == 0 )
 				canDraw = false;
 #endif
+#ifndef __ZEEBO__
 			if ( canDraw && psystem->m_nFinalAnimationFrame != 0 && frames != nil )
 			{
 				RwRaster *curFrame = frames[particle->m_nCurrentFrame];
@@ -1575,6 +1612,7 @@ void CParticle::Render()
 					prevFrame = curFrame;
 				}
 			}
+#endif
 			
 			if ( canDraw && psystem->Flags & DRAWTOP2D )
 			{
@@ -1613,6 +1651,26 @@ void CParticle::Render()
 
 				if ( CSprite::CalcScreenCoors(particle->m_vecPosition, &coors, &w, &h, true) )
 				{
+#ifdef __ZEEBO__
+					// Clamp screen-space quad radius to prevent massive alpha-blended overdraw on fire/smoke
+					float maxRadius = 80.0f;
+					float pw = particle->m_fSize * w;
+					float ph = particle->m_fSize * h;
+					if ( pw > maxRadius && particle->m_fSize > 0.0001f ) {
+						w = maxRadius / particle->m_fSize;
+						pw = maxRadius;
+					}
+					if ( ph > maxRadius && particle->m_fSize > 0.0001f ) {
+						h = maxRadius / particle->m_fSize;
+						ph = maxRadius;
+					}
+					if ( coors.x + pw < 0.0f || coors.x - pw > SCREEN_WIDTH ||
+					     coors.y + ph < 0.0f || coors.y - ph > SCREEN_HEIGHT ) {
+						particle = particle->m_pNext;
+						continue;
+					}
+					zeeboDrawn++;
+#endif
 #ifdef PC_PARTICLE
 					if ( (!particleBanned || SCREEN_WIDTH * fParticleScaleLimit >= w)
 											&& SCREEN_HEIGHT * fParticleScaleLimit >= h )
