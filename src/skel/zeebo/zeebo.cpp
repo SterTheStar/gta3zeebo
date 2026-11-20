@@ -13,6 +13,7 @@
 #include "Pad.h"
 
 #include "../../platform/zeebo/zeebo_brew.h"
+#include "../../platform/zeebo/zeebo_movie.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -324,21 +325,63 @@ extern "C" void Zeebo_OnFrameTick(void)
 	}
 	switch(gGameState){
 	case GS_START_UP:
-	case GS_INIT_LOGO_MPEG:
-	case GS_LOGO_MPEG:
-	case GS_INIT_INTRO_MPEG:
-	case GS_INTRO_MPEG:
-		gGameState = GS_INIT_ONCE;
+		gGameState = GS_INIT_LOGO_MPEG;
 		break;
+
+	case GS_INIT_LOGO_MPEG:
+		if(Zeebo_MovieStart("movies/Logo.mpg")){
+			gGameState = GS_LOGO_MPEG;
+		}else{
+			gGameState = GS_INIT_ONCE;
+		}
+		break;
+
+	case GS_LOGO_MPEG:
+	{
+		uint32_t prevBtns = s_hidBtnState;
+		CPad::GetPad(0)->AffectFromZeebo();
+		if((s_hidBtnState & ~prevBtns) != 0){
+			Zeebo_MovieSkip();
+		}
+		if(!Zeebo_MovieTick()){
+			gGameState = GS_INIT_ONCE;
+		}else{
+			psCameraShowRaster(Scene.camera);
+		}
+		break;
+	}
 
 	case GS_INIT_ONCE:
 		LoadingScreen(nil, nil, "loadsc0");
 		if(!CGame::InitialiseOnceAfterRW()){
 			RsGlobal.quit = TRUE;
 		}else{
+			gGameState = GS_INIT_INTRO_MPEG;
+		}
+		break;
+
+	case GS_INIT_INTRO_MPEG:
+		if(Zeebo_MovieStart("movies/GTAtitles.mpg")){
+			gGameState = GS_INTRO_MPEG;
+		}else{
 			gGameState = GS_INIT_FRONTEND;
 		}
 		break;
+
+	case GS_INTRO_MPEG:
+	{
+		uint32_t prevBtns = s_hidBtnState;
+		CPad::GetPad(0)->AffectFromZeebo();
+		if((s_hidBtnState & ~prevBtns) != 0){
+			Zeebo_MovieSkip();
+		}
+		if(!Zeebo_MovieTick()){
+			gGameState = GS_INIT_FRONTEND;
+		}else{
+			psCameraShowRaster(Scene.camera);
+		}
+		break;
+	}
 
 	case GS_INIT_FRONTEND:
 		LoadingScreen(nil, nil, "loadsc0");
@@ -389,6 +432,7 @@ extern "C" void Zeebo_OnFrameTick(void)
 
 extern "C" void Zeebo_OnAppStop(void)
 {
+	Zeebo_MovieStop();
 	if(s_rwInitialized){
 		RsEventHandler(rsRWTERMINATE, nil);
 		RsEventHandler(rsTERMINATE, nil);
@@ -400,6 +444,10 @@ extern "C" void Zeebo_OnAppStop(void)
 extern "C" boolean Zeebo_OnKeyEvent(AEEEvent evt, uint16_t keyCode, uint32_t dwParam)
 {
 	(void)dwParam;
+	if(Zeebo_MovieIsPlaying() && (evt == EVT_KEY_PRESS || evt == EVT_KEY)){
+		Zeebo_MovieSkip();
+		return TRUE;
+	}
 	int rsKey = MapZeeboKey(keyCode);
 	if(rsKey == rsNULL) return FALSE;
 	RsKeyStatus ks;

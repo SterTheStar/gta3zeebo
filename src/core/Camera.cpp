@@ -731,7 +731,7 @@ CCamera::Process(void)
 #endif
 #ifdef __ZEEBO__
 	// Switch to low-poly LODs earlier to reduce triangle & draw-call load on Zeebo
-	LODDistMultiplier *= 0.65f;
+	LODDistMultiplier *= 0.50f;
 #endif
 
 	// Keep track of speed

@@ -126,6 +126,7 @@ foreach(SRC ${RE3_ALL_SOURCES})
        OR REL STREQUAL "src/core/CdStreamPosix.cpp"
        OR REL STREQUAL "src/audio/sampman_miles.cpp"
        OR REL STREQUAL "src/audio/sampman_oal.cpp"
+       OR REL STREQUAL "src/audio/sampman_null.cpp"
        OR REL MATCHES "^src/audio/oal/"
        OR REL MATCHES "^src/audio/eax/"
        OR REL STREQUAL "src/extras/custompipes_d3d9.cpp"
@@ -166,6 +167,7 @@ target_link_libraries(gta3zeebo.elf PRIVATE librw_zeebo)
 
 target_include_directories(gta3zeebo.elf PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/vendor/pl_mpeg
     ${RE3_INCLUDES}
 )
 

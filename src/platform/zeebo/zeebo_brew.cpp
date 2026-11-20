@@ -63,21 +63,34 @@ static uint32_t Applet_Release(IApplet* po)
     return self->refCount;
 }
 
+static uint32_t s_nextFrameMs = 0;
+
 static void FrameTimerCallback(void* pUser)
 {
     (void)pUser;
     if (!g_Zeebo.bRunning) {
         return;
     }
-    uint32_t startMs = Zeebo_TimeMs();
+    uint32_t now = Zeebo_TimeMs();
+    if (s_nextFrameMs == 0 || (int32_t)(now - s_nextFrameMs) > 66) {
+        s_nextFrameMs = now;
+    }
+
     Zeebo_OnFrameTick();
-    uint32_t elapsed = Zeebo_TimeMs() - startMs;
+    s_nextFrameMs += 33u;
 
     if (g_Zeebo.bRunning && g_Zeebo.pShell) {
-        // Target 33 ms (~30 fps) while always yielding at least 8 ms so the
-        // BREW / Zeebx event & presentation loop is never starved.
-        int32_t delay = (elapsed >= 25u) ? 8 : (int32_t)(33u - elapsed);
-        ISHELL_SetTimer(g_Zeebo.pShell, delay, FrameTimerCallback, NULL);
+        // Fixed 33 ms (~30 fps) cadence without cumulative timer drift,
+        // while always yielding at least 8 ms so BREW / Zeebx never starves.
+        uint32_t after = Zeebo_TimeMs();
+        int32_t rem = (int32_t)(s_nextFrameMs - after);
+        if (rem < 8) {
+            rem = 8;
+            s_nextFrameMs = after + 8u;
+        } else if (rem > 33) {
+            rem = 33;
+        }
+        ISHELL_SetTimer(g_Zeebo.pShell, rem, FrameTimerCallback, NULL);
     }
 }
 
@@ -90,6 +103,7 @@ static boolean Applet_HandleEvent(IApplet* po, AEEEvent eCode, uint16_t wParam, 
             return FALSE;
         }
         g_Zeebo.bRunning = TRUE;
+        s_nextFrameMs = 0;
         if (g_Zeebo.pShell) {
             ISHELL_SetTimer(g_Zeebo.pShell, 1, FrameTimerCallback, NULL);
         }
@@ -110,6 +124,7 @@ static boolean Applet_HandleEvent(IApplet* po, AEEEvent eCode, uint16_t wParam, 
         return TRUE;
 
     case EVT_APP_RESUME:
+        s_nextFrameMs = 0;
         if (g_Zeebo.bRunning && g_Zeebo.pShell) {
             ISHELL_SetTimer(g_Zeebo.pShell, 16, FrameTimerCallback, NULL);
         }
@@ -181,13 +196,14 @@ static int Module_CreateInstance(IModule* po, IShell* pIShell, AEECLSID clsId, v
     g_Zeebo.pShell  = pIShell;
     g_Zeebo.pApplet = (IApplet*)app;
 
-    ISHELL_CreateInstance(pIShell, AEECLSID_FILEMGR, (void**)&g_Zeebo.pFileMgr);
-    ISHELL_CreateInstance(pIShell, AEECLSID_DISPLAY, (void**)&g_Zeebo.pDisplay);
-    ISHELL_CreateInstance(pIShell, AEECLSID_HID,     (void**)&g_Zeebo.pHID);
-    ISHELL_CreateInstance(pIShell, AEECLSID_EGL,     (void**)&g_Zeebo.pEGL);
-    ISHELL_CreateInstance(pIShell, AEECLSID_GL,      (void**)&g_Zeebo.pGL);
-    Zeebo_Log("[BREW] Module_CreateInstance ok, pFileMgr=%p pEGL=%p pGL=%p pHID=%p\n",
-              g_Zeebo.pFileMgr, g_Zeebo.pEGL, g_Zeebo.pGL, g_Zeebo.pHID);
+    ISHELL_CreateInstance(pIShell, AEECLSID_FILEMGR,   (void**)&g_Zeebo.pFileMgr);
+    ISHELL_CreateInstance(pIShell, AEECLSID_DISPLAY,   (void**)&g_Zeebo.pDisplay);
+    ISHELL_CreateInstance(pIShell, AEECLSID_HID,       (void**)&g_Zeebo.pHID);
+    ISHELL_CreateInstance(pIShell, AEECLSID_EGL,       (void**)&g_Zeebo.pEGL);
+    ISHELL_CreateInstance(pIShell, AEECLSID_GL,        (void**)&g_Zeebo.pGL);
+    ISHELL_CreateInstance(pIShell, AEECLSID_MEDIAUTIL, (void**)&g_Zeebo.pMediaUtil);
+    Zeebo_Log("[BREW] Module_CreateInstance ok, pFileMgr=%p pEGL=%p pGL=%p pHID=%p pMediaUtil=%p\n",
+              g_Zeebo.pFileMgr, g_Zeebo.pEGL, g_Zeebo.pGL, g_Zeebo.pHID, g_Zeebo.pMediaUtil);
 
     *ppObj = app;
     return AEE_SUCCESS;
