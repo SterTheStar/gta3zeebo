@@ -15,6 +15,18 @@
 
 #include "../../platform/zeebo/zeebo_brew.h"
 #include "../../platform/zeebo/zeebo_movie.h"
+#include "../../platform/zeebo/zeebo_gles1.h"
+#include "../../platform/zeebo/pandora_logo.h"
+#include "../../platform/zeebo/splash_image.h"
+
+namespace rw {
+namespace gles1 {
+void notifyTextureBound(unsigned int texid);
+void setClientStates(bool vert, bool norm, bool color, bool tex);
+void setLightingState(bool lighting, bool rescaleNormal, bool colorMaterial);
+bool isTextureEnabled(void);
+}
+}
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -284,6 +296,186 @@ void CPad::AffectFromZeebo(void)
 }
 
 // ---------------------------------------------------------------------------
+// Startup Splash Screens (Pandora Studios logo -> Warning screen)
+// ---------------------------------------------------------------------------
+enum StartupStage {
+	STARTUP_NONE    = 0,
+	STARTUP_PANDORA = 1,
+	STARTUP_WARNING = 2,
+};
+
+static StartupStage s_startupStage  = STARTUP_NONE;
+static unsigned int s_splashTex     = 0;
+static uint32_t     s_splashStartMs = 0;
+
+static unsigned int CreateRleSplashTexture(int w, int h, const uint32_t *rle, uint32_t runs)
+{
+	const IGLVtbl *gl = ZeeboGL();
+	if(!gl || w <= 0 || h <= 0 || w > 1024 || h > 512) return 0;
+
+	const int texW = 1024;
+	const int texH = 512;
+	uint16_t *rgb565 = (uint16_t*)calloc((size_t)texW * (size_t)texH, sizeof(uint16_t));
+	if(!rgb565) return 0;
+
+	size_t totalPixels = (size_t)w * (size_t)h;
+	size_t out = 0;
+	for(uint32_t r = 0; r < runs && out < totalPixels; ++r){
+		uint32_t count = rle[r * 2 + 0];
+		uint32_t px    = rle[r * 2 + 1];
+		uint16_t c565  = (uint16_t)((((px >> 0) & 0xF8u) << 8) | (((px >> 8) & 0xFCu) << 3) | (((px >> 16) & 0xF8u) >> 3));
+		if(out + count > totalPixels) count = (uint32_t)(totalPixels - out);
+		for(uint32_t k = 0; k < count; ++k){
+			size_t x = out % (size_t)w;
+			size_t y = out / (size_t)w;
+			rgb565[y * (size_t)texW + x] = c565;
+			out++;
+		}
+	}
+
+	unsigned int texId = 0;
+	gl->glGenTextures(1, &texId);
+	if(texId){
+		gl->glBindTexture(GL_TEXTURE_2D, texId);
+		rw::gles1::notifyTextureBound(texId);
+		gl->glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		gl->glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		gl->glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		gl->glTexParameterx(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		gl->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, texW, texH, 0, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, rgb565);
+	}
+	free(rgb565);
+	return texId;
+}
+
+static void FreeStartupSplash(void)
+{
+	if(s_splashTex){
+		if(const IGLVtbl *gl = ZeeboGL()){
+			gl->glDeleteTextures(1, &s_splashTex);
+		}
+		s_splashTex = 0;
+	}
+	s_startupStage = STARTUP_NONE;
+}
+
+static void StartWarningSplash(void)
+{
+	FreeStartupSplash();
+	s_splashTex = CreateRleSplashTexture(ZEEBO_SPLASH_W, ZEEBO_SPLASH_H,
+	                                     ZEEBO_SPLASH_RLE, ZEEBO_SPLASH_RLE_RUNS);
+	if(s_splashTex){
+		s_startupStage  = STARTUP_WARNING;
+		s_splashStartMs = Zeebo_TimeMs();
+	}
+}
+
+static void InitStartupSplash(void)
+{
+	s_splashTex = CreateRleSplashTexture(ZEEBO_PANDORA_W, ZEEBO_PANDORA_H,
+	                                     ZEEBO_PANDORA_RLE, ZEEBO_PANDORA_RLE_RUNS);
+	if(s_splashTex){
+		s_startupStage  = STARTUP_PANDORA;
+		s_splashStartMs = Zeebo_TimeMs();
+	}else{
+		StartWarningSplash();
+	}
+}
+
+static void SkipStartupSplash(void)
+{
+	if(s_startupStage == STARTUP_PANDORA){
+		StartWarningSplash();
+	}else if(s_startupStage == STARTUP_WARNING){
+		FreeStartupSplash();
+	}
+}
+
+static bool TickStartupSplash(void)
+{
+	if(s_startupStage == STARTUP_NONE) return false;
+
+	uint32_t prevBtns = s_hidBtnState;
+	CPad::GetPad(0)->AffectFromZeebo();
+	if((s_hidBtnState & ~prevBtns) != 0){
+		SkipStartupSplash();
+		return (s_startupStage != STARTUP_NONE);
+	}
+
+	uint32_t totalMs   = (s_startupStage == STARTUP_PANDORA) ? 2800u : 4200u;
+	uint32_t fadeOutMs = 500u;
+	uint32_t elapsed   = Zeebo_TimeMs() - s_splashStartMs;
+
+	if(elapsed >= totalMs){
+		if(s_startupStage == STARTUP_PANDORA){
+			StartWarningSplash();
+			return (s_startupStage != STARTUP_NONE);
+		}
+		FreeStartupSplash();
+		return false;
+	}
+
+	const IGLVtbl *gl = ZeeboGL();
+	if(!gl || !s_splashTex){
+		FreeStartupSplash();
+		return false;
+	}
+
+	uint32_t alpha = 255u;
+	if(elapsed < 400u){
+		alpha = (elapsed * 255u) / 400u;
+	}else if(elapsed > (totalMs - fadeOutMs)){
+		uint32_t rem = totalMs - elapsed;
+		alpha = (rem * 255u) / fadeOutMs;
+	}
+	if(alpha > 255u) alpha = 255u;
+	GLfixed fxAlpha = (GLfixed)((alpha * 65536u) / 255u);
+
+	gl->glDisable(GL_DEPTH_TEST);
+	gl->glDisable(GL_CULL_FACE);
+	gl->glDisable(GL_FOG);
+	gl->glDisable(GL_ALPHA_TEST);
+	gl->glDisable(GL_BLEND);
+	gl->glClearColorx(0, 0, 0, 65536);
+	gl->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+	gl->glEnable(GL_TEXTURE_2D);
+	gl->glBindTexture(GL_TEXTURE_2D, s_splashTex);
+	rw::gles1::notifyTextureBound(s_splashTex);
+
+	gl->glMatrixMode(GL_PROJECTION);
+	gl->glPushMatrix();
+	gl->glLoadIdentity();
+	gl->glMatrixMode(GL_MODELVIEW);
+	gl->glPushMatrix();
+	gl->glLoadIdentity();
+
+	rw::gles1::setLightingState(false, false, false);
+	rw::gles1::setClientStates(true, false, false, true);
+	gl->glColor4x(fxAlpha, fxAlpha, fxAlpha, 65536);
+
+	const float uMax = 640.0f / 1024.0f;
+	const float vMax = 480.0f / 512.0f;
+	const float verts[8] = { -1.0f, 1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 1.0f, -1.0f };
+	const float uvs[8]   = {  0.0f, 0.0f, uMax, 0.0f,  0.0f, vMax, uMax,  vMax };
+
+	gl->glVertexPointer(2, GL_FLOAT, 0, verts);
+	gl->glTexCoordPointer(2, GL_FLOAT, 0, uvs);
+	gl->glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+	gl->glMatrixMode(GL_PROJECTION);
+	gl->glPopMatrix();
+	gl->glMatrixMode(GL_MODELVIEW);
+	gl->glPopMatrix();
+
+	if(!rw::gles1::isTextureEnabled()){
+		gl->glDisable(GL_TEXTURE_2D);
+	}
+	psCameraShowRaster(Scene.camera);
+	return true;
+}
+
+// ---------------------------------------------------------------------------
 // BREW Applet Lifecycle Entry Points (called from zeebo_brew.cpp)
 // ---------------------------------------------------------------------------
 extern "C" boolean Zeebo_OnAppStart(void)
@@ -308,6 +500,7 @@ extern "C" boolean Zeebo_OnAppStart(void)
 		s_rwInitialized = TRUE;
 		Zeebo_Log("[GTA3] calling rsSELECTDEVICE\n");
 		RsEventHandler(rsSELECTDEVICE, nil);
+		InitStartupSplash();
 		Zeebo_Log("[GTA3] Zeebo_OnAppStart done!\n");
 		return TRUE;
 	}
@@ -319,6 +512,10 @@ extern "C" void Zeebo_OnFrameTick(void)
 	if(!s_rwInitialized || RsGlobal.quit){
 		RsGlobal.quit = TRUE;
 		HandleExit();
+		return;
+	}
+
+	if(TickStartupSplash()){
 		return;
 	}
 
@@ -442,6 +639,7 @@ extern "C" void Zeebo_OnFrameTick(void)
 
 extern "C" void Zeebo_OnAppStop(void)
 {
+	FreeStartupSplash();
 	Zeebo_MovieStop();
 	if(s_rwInitialized){
 		RsEventHandler(rsRWTERMINATE, nil);
@@ -454,6 +652,10 @@ extern "C" void Zeebo_OnAppStop(void)
 extern "C" boolean Zeebo_OnKeyEvent(AEEEvent evt, uint16_t keyCode, uint32_t dwParam)
 {
 	(void)dwParam;
+	if(s_startupStage != STARTUP_NONE && (evt == EVT_KEY_PRESS || evt == EVT_KEY)){
+		SkipStartupSplash();
+		return TRUE;
+	}
 	if(Zeebo_MovieIsPlaying() && (evt == EVT_KEY_PRESS || evt == EVT_KEY)){
 		Zeebo_MovieSkip();
 		return TRUE;
