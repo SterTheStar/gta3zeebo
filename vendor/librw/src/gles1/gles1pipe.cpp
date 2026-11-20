@@ -52,6 +52,19 @@ static void defaultInstanceCB(Geometry *geo, InstanceDataHeader *header, bool32 
 	RGBA *col = ((geo->flags & Geometry::PRELIT) != 0)  ? geo->colors : nil;
 	TexCoords *uv = (geo->numTexCoordSets > 0) ? geo->texCoords[0] : nil;
 
+	// If a lit geometry has PRELIT colors that are completely black (0,0,0) (e.g. GTA III cutscene heads),
+	// ignore its PRELIT array so it falls back to dynamic GLES1 lighting + mat->color instead of rendering black.
+	if(col && (geo->flags & Geometry::LIGHT) && norm){
+		bool anyNonBlack = false;
+		for(int32 i = 0; i < geo->numVertices; i++){
+			if(col[i].red | col[i].green | col[i].blue){
+				anyNonBlack = true;
+				break;
+			}
+		}
+		if(!anyNonBlack) col = nil;
+	}
+
 	// Compact per-geometry 4-byte aligned native vertex layout:
 	//   pos:    3 x GLfixed (12 B) [always]
 	//   normal: 4 x int8    ( 4 B) [optional, GL_BYTE]
@@ -166,17 +179,20 @@ static void defaultUninstanceCB(Geometry *geo, InstanceDataHeader *header)
 }
 
 // Per-camera-pass light cache to avoid redundant glLightxv / glEnable / glDisable spam
-struct LightCache {
-	bool    valid;
-	int     enabledCount;
-	GLfixed amb[3];
-	int     numDir;
-	Light  *dir[8];
-	int     numLoc;
-	Light  *loc[8];
+struct CachedLight {
+	GLfixed pos[4];
+	GLfixed diff[3];
 };
 
-static LightCache s_lightCache = { false, 8, {0,0,0}, 0, {nil}, 0, {nil} };
+struct LightCache {
+	bool        valid;
+	int         enabledCount;
+	GLfixed     amb[3];
+	int         numLights;
+	CachedLight lights[8];
+};
+
+static LightCache s_lightCache = { false, 8, {0,0,0}, 0, {} };
 
 void invalidateLightCache(void)
 {
@@ -206,81 +222,60 @@ static void ApplyGles1Lights(const IGLVtbl *gl, Atomic *atomic)
 		ZeeboToFixed(lightData.ambient.red),
 		ZeeboToFixed(lightData.ambient.green),
 		ZeeboToFixed(lightData.ambient.blue),
-		ZeeboToFixed(1.0f)
+		65536
 	};
 
-	// Fast path: if the light set and ambient color match the previous atomic, skip all GL calls
-	if(s_lightCache.valid &&
-	   s_lightCache.amb[0] == amb[0] &&
-	   s_lightCache.amb[1] == amb[1] &&
-	   s_lightCache.amb[2] == amb[2] &&
-	   s_lightCache.numDir == lightData.numDirectionals &&
-	   s_lightCache.numLoc == lightData.numLocals){
-		bool same = true;
-		for(int i = 0; i < lightData.numDirectionals; i++){
-			if(s_lightCache.dir[i] != lightData.directionals[i]){ same = false; break; }
-		}
-		if(same){
-			for(int i = 0; i < lightData.numLocals; i++){
-				if(s_lightCache.loc[i] != lightData.locals[i]){ same = false; break; }
-			}
-		}
-		if(same) return;
-	}
-
-	gl->glLightModelxv(GL_LIGHT_MODEL_AMBIENT, amb);
-
+	CachedLight cur[8];
 	int lightIdx = 0;
-	static const GLfixed kZero[4] = { 0, 0, 0, 65536 };
 	for(int i = 0; i < lightData.numDirectionals && lightIdx < 8; i++){
 		Light *l = lightData.directionals[i];
 		if(!l || !l->getFrame()) continue;
-		uint32 lid = GL_LIGHT0 + (uint32)lightIdx;
 		V3d at = l->getFrame()->getLTM()->at;
-		GLfixed pos[4] = {
-			ZeeboToFixed(-at.x),
-			ZeeboToFixed(-at.y),
-			ZeeboToFixed(-at.z),
-			0
-		};
-		GLfixed diff[4] = {
-			ZeeboToFixed(l->color.red),
-			ZeeboToFixed(l->color.green),
-			ZeeboToFixed(l->color.blue),
-			65536
-		};
-		if(lightIdx >= s_lightCache.enabledCount || !s_lightCache.valid)
-			gl->glEnable(lid);
-		gl->glLightxv(lid, GL_POSITION, pos);
-		gl->glLightxv(lid, GL_DIFFUSE,  diff);
-		gl->glLightxv(lid, GL_AMBIENT,  kZero);
-		gl->glLightxv(lid, GL_SPECULAR, kZero);
+		cur[lightIdx].pos[0]  = ZeeboToFixed(-at.x);
+		cur[lightIdx].pos[1]  = ZeeboToFixed(-at.y);
+		cur[lightIdx].pos[2]  = ZeeboToFixed(-at.z);
+		cur[lightIdx].pos[3]  = 0;
+		cur[lightIdx].diff[0] = ZeeboToFixed(l->color.red);
+		cur[lightIdx].diff[1] = ZeeboToFixed(l->color.green);
+		cur[lightIdx].diff[2] = ZeeboToFixed(l->color.blue);
 		lightIdx++;
 	}
 	for(int i = 0; i < lightData.numLocals && lightIdx < 8; i++){
 		Light *l = lightData.locals[i];
 		if(!l || !l->getFrame()) continue;
-		uint32 lid = GL_LIGHT0 + (uint32)lightIdx;
 		V3d p = l->getFrame()->getLTM()->pos;
-		GLfixed pos[4] = {
-			ZeeboToFixed(p.x),
-			ZeeboToFixed(p.y),
-			ZeeboToFixed(p.z),
-			65536
-		};
-		GLfixed diff[4] = {
-			ZeeboToFixed(l->color.red),
-			ZeeboToFixed(l->color.green),
-			ZeeboToFixed(l->color.blue),
-			65536
-		};
-		if(lightIdx >= s_lightCache.enabledCount || !s_lightCache.valid)
+		cur[lightIdx].pos[0]  = ZeeboToFixed(p.x);
+		cur[lightIdx].pos[1]  = ZeeboToFixed(p.y);
+		cur[lightIdx].pos[2]  = ZeeboToFixed(p.z);
+		cur[lightIdx].pos[3]  = 65536;
+		cur[lightIdx].diff[0] = ZeeboToFixed(l->color.red);
+		cur[lightIdx].diff[1] = ZeeboToFixed(l->color.green);
+		cur[lightIdx].diff[2] = ZeeboToFixed(l->color.blue);
+		lightIdx++;
+	}
+
+	// Fast path: compare actual ambient + light positions & colors (RpLight pointers are mutated in-place)
+	if(s_lightCache.valid &&
+	   s_lightCache.amb[0] == amb[0] &&
+	   s_lightCache.amb[1] == amb[1] &&
+	   s_lightCache.amb[2] == amb[2] &&
+	   s_lightCache.numLights == lightIdx &&
+	   (lightIdx == 0 || memcmp(s_lightCache.lights, cur, (size_t)lightIdx * sizeof(CachedLight)) == 0)){
+		return;
+	}
+
+	gl->glLightModelxv(GL_LIGHT_MODEL_AMBIENT, amb);
+
+	static const GLfixed kZero[4] = { 0, 0, 0, 65536 };
+	for(int i = 0; i < lightIdx; i++){
+		uint32 lid = GL_LIGHT0 + (uint32)i;
+		if(i >= s_lightCache.enabledCount || !s_lightCache.valid)
 			gl->glEnable(lid);
-		gl->glLightxv(lid, GL_POSITION, pos);
+		GLfixed diff[4] = { cur[i].diff[0], cur[i].diff[1], cur[i].diff[2], 65536 };
+		gl->glLightxv(lid, GL_POSITION, cur[i].pos);
 		gl->glLightxv(lid, GL_DIFFUSE,  diff);
 		gl->glLightxv(lid, GL_AMBIENT,  kZero);
 		gl->glLightxv(lid, GL_SPECULAR, kZero);
-		lightIdx++;
 	}
 	int disableTo = s_lightCache.valid ? s_lightCache.enabledCount : 8;
 	for(int i = lightIdx; i < disableTo; i++){
@@ -292,10 +287,10 @@ static void ApplyGles1Lights(const IGLVtbl *gl, Atomic *atomic)
 	s_lightCache.amb[0] = amb[0];
 	s_lightCache.amb[1] = amb[1];
 	s_lightCache.amb[2] = amb[2];
-	s_lightCache.numDir = lightData.numDirectionals;
-	for(int i = 0; i < lightData.numDirectionals; i++) s_lightCache.dir[i] = lightData.directionals[i];
-	s_lightCache.numLoc = lightData.numLocals;
-	for(int i = 0; i < lightData.numLocals; i++) s_lightCache.loc[i] = lightData.locals[i];
+	s_lightCache.numLights = lightIdx;
+	if(lightIdx > 0){
+		memcpy(s_lightCache.lights, cur, (size_t)lightIdx * sizeof(CachedLight));
+	}
 }
 
 static void RenderMeshesWithVerts(const IGLVtbl *gl, Atomic *atomic, InstanceDataHeader *header, uint8 *vertBuf)
@@ -307,14 +302,18 @@ static void RenderMeshesWithVerts(const IGLVtbl *gl, Atomic *atomic, InstanceDat
 	bool hasNorm  = (header->normalOffset >= 0);
 	bool hasColor = (header->colorOffset >= 0);
 	bool hasTex   = (header->texCoordOffset >= 0);
-	bool useLight = (geo->flags & Geometry::LIGHT) != 0 && hasNorm;
+	// In GTA III, world/building meshes with non-black PRELIT vertex colors rely on their baked
+	// day/night lighting; enabling GL_LIGHTING on them in GLES1 would multiply PRELIT * ambient -> too dark.
+	// Lit dynamic models (peds, vehicles, cutscene heads whose black PRELIT was stripped) use GL_LIGHTING.
+	bool useLight = (geo->flags & Geometry::LIGHT) != 0 && hasNorm && !hasColor;
 
 	gl->glMatrixMode(GL_MODELVIEW);
 	if(useLight){
 		// Set world-space lights while GL_MODELVIEW still holds only the view matrix
 		ApplyGles1Lights(gl, atomic);
 	}
-	setLightingState(useLight, useLight, useLight && hasColor);
+	// Keep GL_COLOR_MATERIAL enabled whenever lighting is active so glColor4x drives material color & alpha (e.g. car windows)
+	setLightingState(useLight, useLight, useLight);
 
 	if(ltm){
 		gl->glPushMatrix();

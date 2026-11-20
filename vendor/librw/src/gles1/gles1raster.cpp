@@ -398,6 +398,15 @@ static Raster *readD3DRasterLevels(Stream *stream, uint32 format, int32 width, i
 		stream->read8(pal, 4 * pallength);
 	}
 
+	// On Zeebo, skip top mip levels above 256x256 when mipmaps exist (4x faster upload & 4x less VRAM)
+	while(numLevels > 1 && IsPowerOfTwo(width) && IsPowerOfTwo(height) && (width > 256 || height > 256)){
+		uint32 skipSize = stream->readU32();
+		stream->seek(skipSize);
+		width  = (width  > 1) ? (width  >> 1) : 1;
+		height = (height > 1) ? (height >> 1) : 1;
+		numLevels--;
+	}
+
 	const bool useMipmaps = (numLevels > 1) && IsPowerOfTwo(width) && IsPowerOfTwo(height);
 	int32 rfmt = (format & 0x0F00) | (type & 0x07);
 	if((rfmt & 0x0F00) == 0) rfmt |= (depth == 16) ? Raster::C565 : Raster::C8888;
@@ -411,6 +420,8 @@ static Raster *readD3DRasterLevels(Stream *stream, uint32 format, int32 width, i
 	const IGLVtbl *gl = ZeeboGL();
 	Gles1Raster *nat = raster ? GETGLES1RASTEREXT(raster) : nil;
 
+	static uint8 *s_mipReadBuf = nil;
+	static size_t s_mipReadBufCap = 0;
 	static uint8 *s_mipRgbaA = nil;
 	static size_t s_mipRgbaACap = 0;
 	static uint8 *s_mipRgbaB = nil;
@@ -435,7 +446,12 @@ static Raster *readD3DRasterLevels(Stream *stream, uint32 format, int32 width, i
 			continue;
 		}
 
-		uint8 *buf = rwNewT(uint8, size, MEMDUR_FUNCTION | ID_IMAGE);
+		bool tempRead = false;
+		uint8 *buf = AllocScratch(&s_mipReadBuf, &s_mipReadBufCap, size > 0 ? size : 1u, 256u * 1024u, &tempRead);
+		if(!buf){
+			stream->seek(size);
+			continue;
+		}
 		stream->read8(buf, size);
 
 		int32 count = lw * lh;
@@ -467,7 +483,7 @@ static Raster *readD3DRasterLevels(Stream *stream, uint32 format, int32 width, i
 			}
 		}
 
-		rwFree(buf);
+		if(tempRead) rwFree(buf);
 		if(tempRgba && rgba) rwFree(rgba);
 		if(temp16 && tex16) rwFree(tex16);
 

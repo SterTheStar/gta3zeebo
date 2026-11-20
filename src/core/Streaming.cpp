@@ -218,7 +218,7 @@ CStreaming::Init2(void)
 	// PC only, figure out how much memory we got
 #ifdef __ZEEBO__
 #define MB (1024*1024)
-	ms_memoryAvailable = 24*MB;
+	ms_memoryAvailable = 36*MB;
 	desiredNumVehiclesLoaded = 12;
 #undef MB
 #elif defined(GTA_PC)
@@ -377,7 +377,7 @@ CStreaming::LoadCdDirectory(void)
 
 #ifdef __ZEEBO__
 #define MB (1024*1024)
-	ms_memoryAvailable = 24*MB;
+	ms_memoryAvailable = 36*MB;
 	desiredNumVehiclesLoaded = 12;
 #undef MB
 #elif defined(GTA_PC)
@@ -1932,8 +1932,16 @@ CStreaming::LoadRequestedModels(void)
 
 	// We have data, load
 	if(ms_channel[currentChannel].state == CHANNELSTATE_READING ||
-	   ms_channel[currentChannel].state == CHANNELSTATE_STARTED)
+	   ms_channel[currentChannel].state == CHANNELSTATE_STARTED){
 		ProcessLoadingChannel(currentChannel);
+#ifdef __ZEEBO__
+		// CdStreamZeebo is synchronous: don't also do a blocking fread for the next
+		// model/TXD in the exact same frame we just spent decoding & uploading textures.
+		if(ms_channel[currentChannel].state != CHANNELSTATE_STARTED)
+			currentChannel = 1 - currentChannel;
+		return;
+#endif
+	}
 
 	if(ms_channelError == -1){
 		// Channel is idle, read more data

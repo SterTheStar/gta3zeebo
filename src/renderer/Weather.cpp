@@ -297,11 +297,19 @@ void CWeather::AddRain()
 	}
 	if (Rain <= 0.1f)
 		return;
+#ifdef __ZEEBO__
+	if ((CTimer::GetFrameCounter() % 3) != 0)
+		return;
+#endif
 	static RwRGBA colour;
 	float screen_width = SCREEN_WIDTH;
 	float screen_height = SCREEN_HEIGHT;
 	int cur_frame = (int)(3 * Rain) & 3;
+#ifdef __ZEEBO__
+	int num_drops = 1;
+#else
 	int num_drops = (int)(2 * Rain) + 2;
+#endif
 	static int STATIC_RAIN_ANGLE = -45;
 	static int count = 1500;
 	static int add_angle = 1;
@@ -368,8 +376,13 @@ void CWeather::AddRain()
 		CParticle::AddParticle(PARTICLE_RAINDROP_2D, pos, CVector(0.0f, 0.0f, 0.0f), nil, CGeneral::GetRandomNumberInRange(0.5f, 0.9f),
 			colour, CGeneral::GetRandomNumberInRange(-10, 10), 360 - rain_angle + CGeneral::GetRandomNumberInRange(-30, 30), cur_frame, 50);
 	}
+#ifdef __ZEEBO__
+	int num_splash_attempts = 1;
+	int num_splashes = 1;
+#else
 	int num_splash_attempts = (int)(3 * Rain) + 1;
 	int num_splashes = (int)(3 * Rain) + 4;
+#endif
 	CVector splash_points[4];
 	splash_points[0] = CVector(-RwCameraGetViewWindow(TheCamera.m_pRwCamera)->x, RwCameraGetViewWindow(TheCamera.m_pRwCamera)->y, 1.0f) *
 		RwCameraGetFarClipPlane(TheCamera.m_pRwCamera) / (RwCameraGetFarClipPlane(TheCamera.m_pRwCamera) * *(CVector2D*)RwCameraGetViewWindow(TheCamera.m_pRwCamera)).Magnitude();
@@ -467,7 +480,13 @@ void CWeather::RenderRainStreaks(void)
 		return;
 	TempBufferIndicesStored = 0;
 	TempBufferVerticesStored = 0;
+#ifdef __ZEEBO__
+	// Each rain streak is an 18x22m full-screen additive quad; cap to 2 sheets to avoid massive overdraw
+	const int maxStreaks = (NUM_RAIN_STREAKS > 2) ? 2 : NUM_RAIN_STREAKS;
+	for (int i = 0; i < maxStreaks; i++) {
+#else
 	for (int i = 0; i < NUM_RAIN_STREAKS; i++) {
+#endif
 		if (Streaks[i].timer) {
 			float secondsElapsed = (CTimer::GetTimeInMilliseconds() - Streaks[i].timer) / 1024.0f;
 			if (secondsElapsed > STREAK_LIFETIME)

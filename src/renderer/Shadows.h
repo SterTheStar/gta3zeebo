@@ -1,9 +1,16 @@
 #pragma once
 
+#ifdef __ZEEBO__
+#define MAX_STOREDSHADOWS    16
+#define MAX_POLYBUNCHES      128
+#define MAX_STATICSHADOWS    24
+#define MAX_PERMAMENTSHADOWS 24
+#else
 #define MAX_STOREDSHADOWS    48
 #define MAX_POLYBUNCHES      300
 #define MAX_STATICSHADOWS    64
 #define MAX_PERMAMENTSHADOWS 48
+#endif
 
 
 class CEntity;

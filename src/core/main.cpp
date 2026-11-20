@@ -1431,7 +1431,9 @@ RenderScene(void)
 	CClouds::Render();
 	DoRWRenderHorizon();
 	CRenderer::RenderRoads();
+#ifndef __ZEEBO__
 	CCoronas::RenderReflections();
+#endif
 	RwRenderStateSet(rwRENDERSTATEFOGENABLE, (void*)TRUE);
 	CRenderer::RenderEverythingBarRoads();
 	CRenderer::RenderBoats();
@@ -1477,7 +1479,9 @@ RenderEffects(void)
 	CShadows::RenderStoredShadows();
 	CSkidmarks::Render();
 	CAntennas::Render();
+#ifndef __ZEEBO__
 	CRubbish::Render();
+#endif
 	CCoronas::Render();
 	CParticle::Render();
 	CPacManPickups::Render();

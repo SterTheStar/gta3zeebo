@@ -79,6 +79,21 @@ struct GLStateCache {
 
 static GLStateCache s_gl;
 
+static inline void UpdateDepthState(const IGLVtbl *gl)
+{
+	if(!gl) return;
+	if(s_state.zTest){
+		gl->glEnable(GL_DEPTH_TEST);
+		gl->glDepthFunc(GL_LEQUAL);
+	}else if(s_state.zWrite){
+		// OpenGL ES skips depth writes when GL_DEPTH_TEST is disabled (needed by DrawRadarMask)
+		gl->glEnable(GL_DEPTH_TEST);
+		gl->glDepthFunc(GL_ALWAYS);
+	}else{
+		gl->glDisable(GL_DEPTH_TEST);
+	}
+}
+
 static inline void UpdateBlendState(const IGLVtbl *gl)
 {
 	if(!gl) return;
@@ -515,15 +530,13 @@ static void setRenderState(int32 state, void *pvalue)
 	case ZTESTENABLE:
 		if(s_state.zTest == (bool32)value) break;
 		s_state.zTest = (bool32)value;
-		if(gl){
-			if(value) gl->glEnable(GL_DEPTH_TEST);
-			else      gl->glDisable(GL_DEPTH_TEST);
-		}
+		UpdateDepthState(gl);
 		break;
 	case ZWRITEENABLE:
 		if(s_state.zWrite == (bool32)value) break;
 		s_state.zWrite = (bool32)value;
 		if(gl) gl->glDepthMask(value ? GL_TRUE : GL_FALSE);
+		UpdateDepthState(gl);
 		break;
 	case VERTEXALPHA:
 		if(s_state.vertexAlpha == (bool32)value) break;
