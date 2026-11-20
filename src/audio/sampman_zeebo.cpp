@@ -193,14 +193,22 @@ static bool IsMediaPlaying(IMedia* m)
 
 static int ComputeChannelBrewVol(const ZeeboSfxChannel& ch, uint8 masterVol, uint8 fadeVol)
 {
-	float v = (float)ch.volume / 127.0f;
-	v *= ((float)masterVol / 127.0f) * ((float)fadeVol / 127.0f);
+	// Match sampman_oal.cpp exact volume scaling: (fade * vol * master) >> 14 (0..127)
+	uint32 scaled = ((uint32)fadeVol * (uint32)ch.volume * (uint32)masterVol) >> 14;
+	if (scaled > MAX_VOLUME) scaled = MAX_VOLUME;
+	float v = (float)scaled / (float)MAX_VOLUME;
+
+	// OpenAL / DirectSound inverse-distance attenuation (AL_INVERSE_DISTANCE_CLAMPED)
 	if (ch.is3D && ch.maxDist > 0.01f) {
 		float dist = sqrtf(ch.posX * ch.posX + ch.posY * ch.posY + ch.posZ * ch.posZ);
+		float refDist = (ch.minDist > 0.5f) ? ch.minDist : 0.5f;
 		if (dist >= ch.maxDist) {
 			v = 0.0f;
-		} else if (dist > ch.minDist && ch.maxDist > ch.minDist) {
-			float att = 1.0f - (dist - ch.minDist) / (ch.maxDist - ch.minDist);
+		} else if (dist > refDist) {
+			float att = refDist / dist;
+			// Smoothly taper off to 0 near maxDist so distant sounds don't pop
+			float edge = (dist - refDist) / (ch.maxDist - refDist);
+			att *= (1.0f - edge * edge);
 			if (att < 0.0f) att = 0.0f;
 			v *= att;
 		}
@@ -251,6 +259,7 @@ struct ZeeboStream {
 	bool    hasPreloaded;
 	uint8   volume; // 0..127
 	uint8   pan;
+	uint8   effectFlag;
 	bool    paused;
 	uint32  startMs;
 	uint32  startPosMs;
@@ -343,10 +352,11 @@ static bool ResolveAudioPath(const char* rawName, char* outPath, size_t outSize)
 	return false;
 }
 
-static int ComputeStreamBrewVol(uint8 streamVol, uint8 musicMaster, uint8 musicFade)
+static int ComputeStreamBrewVol(uint8 streamVol, uint8 masterVol, uint8 fadeVol)
 {
-	float v = ((float)streamVol / 127.0f) * ((float)musicMaster / 127.0f) * ((float)musicFade / 127.0f);
-	int bv = (int)(v * 100.0f + 0.5f);
+	uint32 scaled = ((uint32)fadeVol * (uint32)streamVol * (uint32)masterVol) >> 14;
+	if (scaled > MAX_VOLUME) scaled = MAX_VOLUME;
+	int bv = (int)(((float)scaled / (float)MAX_VOLUME) * 100.0f + 0.5f);
 	if (bv < 0) bv = 0;
 	if (bv > 100) bv = 100;
 	return bv;
@@ -494,6 +504,15 @@ void cSampleManager::UpdateEffectsVolume(void)
 			}
 		}
 	}
+	for (int i = 0; i < MAX_STREAMS; i++) {
+		if (s_streams[i].media && s_streams[i].media->pvt && s_streams[i].effectFlag) {
+			int bv = ComputeStreamBrewVol(s_streams[i].volume, m_nEffectsVolume, m_nEffectsFadeVolume);
+			if (bv != s_streams[i].lastBrewVol) {
+				s_streams[i].lastBrewVol = bv;
+				s_streams[i].media->pvt->SetMediaParm(s_streams[i].media, (int)MM_PARM_VOLUME, bv, 0);
+			}
+		}
+	}
 }
 
 void cSampleManager::SetEffectsMasterVolume(uint8 nVolume)
@@ -506,7 +525,7 @@ void cSampleManager::SetMusicMasterVolume(uint8 nVolume)
 {
 	m_nMusicVolume = nVolume;
 	for (int i = 0; i < MAX_STREAMS; i++) {
-		if (s_streams[i].media && s_streams[i].media->pvt) {
+		if (s_streams[i].media && s_streams[i].media->pvt && !s_streams[i].effectFlag) {
 			int bv = ComputeStreamBrewVol(s_streams[i].volume, m_nMusicVolume, m_nMusicFadeVolume);
 			if (bv != s_streams[i].lastBrewVol) {
 				s_streams[i].lastBrewVol = bv;
@@ -608,7 +627,13 @@ bool8 cSampleManager::InitialiseChannel(uint32 nChannel, uint32 nSfx, uint8 nBan
 	ReleaseChannelMedia(ch);
 	ch.sfxId = nSfx;
 	ch.freq = m_aSamples[nSfx].nFrequency ? m_aSamples[nSfx].nFrequency : 22050;
+	ch.volume = MAX_VOLUME;
+	ch.pan = 63;
 	ch.loopCount = 1;
+	ch.posX = ch.posY = ch.posZ = 0.0f;
+	ch.minDist = 1.0f;
+	ch.maxDist = 0.0f;
+	ch.is3D = (nChannel < MAXCHANNELS);
 	ch.inited = true;
 	return TRUE;
 }
@@ -618,7 +643,14 @@ void cSampleManager::SetChannelEmittingVolume(uint32 nChannel, uint32 nVolume)
 {
 	if (nChannel >= NUM_CHANNELS) return;
 	ZeeboSfxChannel& ch = s_channels[nChannel];
-	ch.volume = (nVolume > MAX_VOLUME) ? MAX_VOLUME : nVolume;
+	uint32 vol = (nVolume > MAX_VOLUME) ? MAX_VOLUME : nVolume;
+	// Duck SFX during cutscenes (matching sampman_oal.cpp)
+	if (MusicManager.GetMusicMode() == MUSICMODE_CUTSCENE &&
+	    MusicManager.GetNextTrack() != STREAMED_SOUND_NEWS_INTRO &&
+	    MusicManager.GetNextTrack() != STREAMED_SOUND_CUTSCENE_SAL4_BDBD) {
+		vol /= 4;
+	}
+	ch.volume = vol;
 	if (ch.media && ch.media->pvt) {
 		int bv = ComputeChannelBrewVol(ch, m_nEffectsVolume, m_nEffectsFadeVolume);
 		if (bv != ch.lastBrewVol) {
@@ -836,7 +868,9 @@ bool8 cSampleManager::StartStreamedFile(uint8 nFile, uint32 nPos, uint8 nStream)
 		st.lengthMs = s_streamLengths[nFile];
 	}
 
-	int bv = ComputeStreamBrewVol(st.volume, m_nMusicVolume, m_nMusicFadeVolume);
+	int bv = st.effectFlag
+		? ComputeStreamBrewVol(st.volume, m_nEffectsVolume, m_nEffectsFadeVolume)
+		: ComputeStreamBrewVol(st.volume, m_nMusicVolume, m_nMusicFadeVolume);
 	st.lastBrewVol = bv;
 	m->pvt->SetMediaParm(m, (int)MM_PARM_PLAY_REPEAT, 1, 0);
 	m->pvt->SetMediaParm(m, (int)MM_PARM_VOLUME, bv, 0);
@@ -866,13 +900,15 @@ int32 cSampleManager::GetStreamedFilePosition(uint8 nStream)
 
 void cSampleManager::SetStreamedVolumeAndPan(uint8 nVolume, uint8 nPan, uint8 nEffectFlag, uint8 nStream)
 {
-	(void)nEffectFlag;
 	if (nStream >= MAX_STREAMS) return;
 	ZeeboStream& st = s_streams[nStream];
 	st.volume = (nVolume > MAX_VOLUME) ? MAX_VOLUME : nVolume;
 	st.pan = nPan;
+	st.effectFlag = nEffectFlag;
 	if (st.media && st.media->pvt) {
-		int bv = ComputeStreamBrewVol(st.volume, m_nMusicVolume, m_nMusicFadeVolume);
+		int bv = nEffectFlag
+			? ComputeStreamBrewVol(st.volume, m_nEffectsVolume, m_nEffectsFadeVolume)
+			: ComputeStreamBrewVol(st.volume, m_nMusicVolume, m_nMusicFadeVolume);
 		if (bv != st.lastBrewVol) {
 			st.lastBrewVol = bv;
 			st.media->pvt->SetMediaParm(st.media, (int)MM_PARM_VOLUME, bv, 0);

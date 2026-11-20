@@ -128,18 +128,12 @@ static void StartMovieAudio(const uint8_t* fileData, size_t fileSize)
 	plm_set_video_enabled(aplm, FALSE);
 	plm_set_audio_enabled(aplm, TRUE);
 
-	int numAudio = plm_get_num_audio_streams(aplm);
-	if (numAudio <= 0) {
-		plm_destroy(aplm);
-		return;
-	}
-
-	int sampleRate = plm_get_samplerate(aplm);
-	if (sampleRate <= 0) sampleRate = 44100;
+	// Probe up to 128 KB because Logo.mpg's first MP2 audio packet starts at ~46 KB
+	plm_probe(aplm, 128 * 1024);
 
 	// Decode MP2 audio track into a mono 16-bit PCM WAV buffer (halves RAM usage on 64MB Zeebo)
-	size_t capSamples = (size_t)sampleRate * 40u; // up to 40s initial buffer (~3.5MB max)
-	if (capSamples > 2000000u) capSamples = 2000000u;
+	// Cap at 48000 Hz * 40s (~3.8 MB max)
+	const size_t capSamples = 1920000u;
 	uint8_t* wav = (uint8_t*)malloc(44u + capSamples * sizeof(int16_t));
 	if (!wav) {
 		plm_destroy(aplm);
@@ -165,6 +159,8 @@ static void StartMovieAudio(const uint8_t* fileData, size_t fileSize)
 		if (totalSamples >= capSamples) break;
 	}
 
+	int sampleRate = plm_get_samplerate(aplm);
+	if (sampleRate <= 0) sampleRate = 44100;
 	plm_destroy(aplm);
 
 	if (totalSamples == 0) {
@@ -173,6 +169,8 @@ static void StartMovieAudio(const uint8_t* fileData, size_t fileSize)
 	}
 
 	uint32_t pcmBytes = (uint32_t)(totalSamples * sizeof(int16_t));
+	uint8_t* shrunk = (uint8_t*)realloc(wav, 44u + pcmBytes);
+	if (shrunk) wav = shrunk;
 	WriteMovieWavHeader(wav, pcmBytes, (uint32_t)sampleRate, 1);
 
 	s_audioWav = wav;
