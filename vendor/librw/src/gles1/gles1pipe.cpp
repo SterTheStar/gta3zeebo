@@ -218,10 +218,14 @@ static void ApplyGles1Lights(const IGLVtbl *gl, Atomic *atomic)
 		lightData.ambient.red = lightData.ambient.green = lightData.ambient.blue = lightData.ambient.alpha = 1.0f;
 	}
 
+	float ambR = lightData.ambient.red   < 0.14f ? 0.14f : lightData.ambient.red;
+	float ambG = lightData.ambient.green < 0.14f ? 0.14f : lightData.ambient.green;
+	float ambB = lightData.ambient.blue  < 0.14f ? 0.14f : lightData.ambient.blue;
+
 	GLfixed amb[4] = {
-		ZeeboToFixed(lightData.ambient.red),
-		ZeeboToFixed(lightData.ambient.green),
-		ZeeboToFixed(lightData.ambient.blue),
+		ZeeboToFixed(ambR),
+		ZeeboToFixed(ambG),
+		ZeeboToFixed(ambB),
 		65536
 	};
 
@@ -293,6 +297,9 @@ static void ApplyGles1Lights(const IGLVtbl *gl, Atomic *atomic)
 	}
 }
 
+static uint8 *s_litColorScratch = nil;
+static size_t s_litColorScratchCap = 0;
+
 static void RenderMeshesWithVerts(const IGLVtbl *gl, Atomic *atomic, InstanceDataHeader *header, uint8 *vertBuf)
 {
 	Geometry *geo = atomic->geometry;
@@ -303,8 +310,9 @@ static void RenderMeshesWithVerts(const IGLVtbl *gl, Atomic *atomic, InstanceDat
 	bool hasColor = (header->colorOffset >= 0);
 	bool hasTex   = (header->texCoordOffset >= 0);
 	// In GTA III, world/building meshes with non-black PRELIT vertex colors rely on their baked
-	// day/night lighting; enabling GL_LIGHTING on them in GLES1 would multiply PRELIT * ambient -> too dark.
-	// Lit dynamic models (peds, vehicles, cutscene heads whose black PRELIT was stripped) use GL_LIGHTING.
+	// day/night lighting plus additive world ambient; enabling GL_LIGHTING on them in GLES1 would
+	// multiply PRELIT * ambient instead of adding. Lit dynamic models (peds, vehicles, cutscene heads)
+	// use GL_LIGHTING.
 	bool useLight = (geo->flags & Geometry::LIGHT) != 0 && hasNorm && !hasColor;
 
 	gl->glMatrixMode(GL_MODELVIEW);
@@ -333,7 +341,54 @@ static void RenderMeshesWithVerts(const IGLVtbl *gl, Atomic *atomic, InstanceDat
 		gl->glNormalPointer(GL_BYTE, stride, vertBuf + header->normalOffset);
 	}
 	if(hasColor){
-		gl->glColorPointer(4, GL_UNSIGNED_BYTE, stride, vertBuf + header->colorOffset);
+		const uint8 *colPtr = vertBuf + header->colorOffset;
+		int colStride = stride;
+		if((geo->flags & Geometry::LIGHT) != 0){
+			WorldLights lightData;
+			Light *directionals[8];
+			Light *locals[8];
+			lightData.directionals = directionals;
+			lightData.numDirectionals = 8;
+			lightData.locals = locals;
+			lightData.numLocals = 8;
+			memset(&lightData.ambient, 0, sizeof(lightData.ambient));
+			if(engine->currentWorld){
+				((World*)engine->currentWorld)->enumerateLights(atomic, &lightData);
+			}
+			float ar = lightData.ambient.red   < 0.14f ? 0.14f : lightData.ambient.red;
+			float ag = lightData.ambient.green < 0.14f ? 0.14f : lightData.ambient.green;
+			float ab = lightData.ambient.blue  < 0.14f ? 0.14f : lightData.ambient.blue;
+			int addR = (int)(ar * 255.0f);
+			int addG = (int)(ag * 255.0f);
+			int addB = (int)(ab * 255.0f);
+			if(addR > 255) addR = 255;
+			if(addG > 255) addG = 255;
+			if(addB > 255) addB = 255;
+
+			const int32 nVerts = (int32)header->totalNumVertex;
+			const size_t needed = (size_t)nVerts * 4u;
+			if(needed > s_litColorScratchCap){
+				if(s_litColorScratch) rwFree(s_litColorScratch);
+				s_litColorScratch = (uint8*)rwMalloc(needed, MEMDUR_EVENT | ID_GEOMETRY);
+				s_litColorScratchCap = s_litColorScratch ? needed : 0;
+			}
+			if(s_litColorScratch){
+				const uint8 *src = colPtr;
+				uint8 *dst = s_litColorScratch;
+				for(int32 v = 0; v < nVerts; v++, src += stride, dst += 4){
+					int r = src[0] + addR;
+					int g = src[1] + addG;
+					int b = src[2] + addB;
+					dst[0] = (uint8)(r > 255 ? 255 : r);
+					dst[1] = (uint8)(g > 255 ? 255 : g);
+					dst[2] = (uint8)(b > 255 ? 255 : b);
+					dst[3] = src[3];
+				}
+				colPtr = s_litColorScratch;
+				colStride = 4;
+			}
+		}
+		gl->glColorPointer(4, GL_UNSIGNED_BYTE, colStride, colPtr);
 	}
 	if(hasTex){
 		gl->glTexCoordPointer(2, GL_FIXED, stride, vertBuf + header->texCoordOffset);
