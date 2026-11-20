@@ -296,12 +296,17 @@ bool32 rasterFromImage(Raster *raster, Image *image)
 		const uint8 *src = image->pixels + y * image->stride;
 		uint8 *dst = pixels + y * raster->stride;
 		if(image->depth == 32){
-			memcpy(dst, src, (size_t)w * 4);
+			for(int32 x = 0; x < w; x++){
+				dst[x*4+0] = src[x*4+2];
+				dst[x*4+1] = src[x*4+1];
+				dst[x*4+2] = src[x*4+0];
+				dst[x*4+3] = src[x*4+3];
+			}
 		}else if(image->depth == 24){
 			for(int32 x = 0; x < w; x++){
-				dst[x*4+0] = src[x*3+0];
+				dst[x*4+0] = src[x*3+2];
 				dst[x*4+1] = src[x*3+1];
-				dst[x*4+2] = src[x*3+2];
+				dst[x*4+2] = src[x*3+0];
 				dst[x*4+3] = 255;
 			}
 		}else if(image->depth == 8 && image->palette){

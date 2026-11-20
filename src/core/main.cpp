@@ -1119,23 +1119,6 @@ DisplayGameDebugText()
 	char str[200];
 	wchar ustr[200];
 
-#ifdef __ZEEBO__
-	if (s_zeeboProfStr[0] != '\0') {
-		AsciiToUnicode(s_zeeboProfStr, ustr);
-		CFont::SetPropOff();
-		CFont::SetBackgroundOff();
-		CFont::SetFontStyle(FONT_BANK);
-		CFont::SetCentreOff();
-		CFont::SetRightJustifyOff();
-		CFont::SetJustifyOff();
-		CFont::SetBackGroundOnlyTextOff();
-		CFont::SetWrapx(SCREEN_WIDTH);
-		CFont::SetScale(0.45f, 0.7f);
-		CFont::SetColor(CRGBA(255, 255, 0, 255));
-		CFont::PrintString(8.0f, 8.0f, ustr);
-	}
-#endif
-
 #ifdef DRAW_GAME_VERSION_TEXT
 	wchar ver[200];
 
@@ -1594,7 +1577,10 @@ void
 Idle(void *arg)
 {
 #ifdef __ZEEBO__
+	static uint32_t s_prevT0 = 0;
 	uint32_t zp_t0 = Zeebo_TimeMs();
+	uint32_t zp_dt = (s_prevT0 != 0) ? (zp_t0 - s_prevT0) : 0;
+	s_prevT0 = zp_t0;
 	uint32_t zp_tProc = 0, zp_tList = 0, zp_tScene = 0, zp_tFx = 0, zp_t2D = 0, zp_tSwap = 0, zp_sw0 = 0;
 	g_zeeboDrawCalls = 0;
 	g_zeeboTris = 0;
@@ -1817,14 +1803,16 @@ Idle(void *arg)
 		uint32_t zp_end = Zeebo_TimeMs();
 		zp_tSwap = zp_end - zp_sw0;
 		uint32_t zp_tot = zp_end - zp_t0;
-		static uint32_t s_f = 0, s_proc = 0, s_list = 0, s_scene = 0, s_fx = 0, s_2d = 0, s_swap = 0, s_tot = 0, s_dc = 0, s_tri = 0;
+		static uint32_t s_f = 0, s_proc = 0, s_list = 0, s_scene = 0, s_fx = 0, s_2d = 0, s_swap = 0, s_tot = 0, s_dt = 0, s_dc = 0, s_tri = 0;
 		s_f++; s_proc += zp_tProc; s_list += zp_tList; s_scene += zp_tScene;
-		s_fx += zp_tFx; s_2d += zp_t2D; s_swap += zp_tSwap; s_tot += zp_tot;
+		s_fx += zp_tFx; s_2d += zp_t2D; s_swap += zp_tSwap; s_tot += zp_tot; s_dt += zp_dt;
 		s_dc += g_zeeboDrawCalls; s_tri += g_zeeboTris;
 		if (s_f >= 30) {
 			uint32_t fps = (s_tot > 0) ? (s_f * 1000u / s_tot) : 0;
+			uint32_t rfps = (s_dt > 0) ? (s_f * 1000u / s_dt) : 0;
 			snprintf(s_zeeboProfStr, sizeof(s_zeeboProfStr),
-				"F:%u T:%u P:%u L:%u S:%u X:%u 2D:%u SW:%u DC:%u TR:%u",
+				"RF:%u DT:%u F:%u T:%u P:%u L:%u S:%u X:%u 2D:%u SW:%u DC:%u TR:%u",
+				(unsigned)rfps, (unsigned)(s_dt / s_f),
 				(unsigned)fps, (unsigned)(s_tot / s_f),
 				(unsigned)(s_proc / s_f), (unsigned)(s_list / s_f),
 				(unsigned)(s_scene / s_f), (unsigned)(s_fx / s_f),
@@ -1833,7 +1821,7 @@ Idle(void *arg)
 			if (g_Zeebo.pHelpers && g_Zeebo.pHelpers->pfnDbgPrintf) {
 				g_Zeebo.pHelpers->pfnDbgPrintf("[PROF] %s\n", s_zeeboProfStr);
 			}
-			s_f = s_proc = s_list = s_scene = s_fx = s_2d = s_swap = s_tot = s_dc = s_tri = 0;
+			s_f = s_proc = s_list = s_scene = s_fx = s_2d = s_swap = s_tot = s_dt = s_dc = s_tri = 0;
 		}
 	}
 #endif

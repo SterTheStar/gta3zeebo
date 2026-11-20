@@ -11,6 +11,7 @@
 #include "Draw.h"
 #include "Frontend.h"
 #include "Pad.h"
+#include "PCSave.h"
 
 #include "../../platform/zeebo/zeebo_brew.h"
 #include "../../platform/zeebo/zeebo_movie.h"
@@ -23,8 +24,15 @@ long _dwOperatingSystemVersion = 0;
 size_t _dwMemAvailPhys = 64 * 1024 * 1024;
 RwUInt32 gGameState = 0;
 
+void _psCreateFolder(const char *path);
+
 const char *_psGetUserFilesFolder(void)
 {
+	static bool s_dirCreated = false;
+	if(!s_dirCreated){
+		_psCreateFolder("userfiles");
+		s_dirCreated = true;
+	}
 	return "userfiles";
 }
 
@@ -113,6 +121,8 @@ RwBool psInitialize(void)
 	RsGlobal.maximumHeight= 480;
 	RsGlobal.maxFPS       = 30;
 	RsGlobal.quit         = FALSE;
+
+	C_PcSave::SetSaveDirectory(_psGetUserFilesFolder());
 
 	return TRUE;
 }

@@ -2,6 +2,7 @@
 #include "zeebo_brew.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -122,11 +123,19 @@ int _open(const char* name, int flags, ...)
     char norm[260];
     ResolveCwdPath(name, norm, sizeof(norm));
 
-    int acc = flags & 3;
+    int acc = flags & O_ACCMODE;
     OpenFileMode mode = _OFM_READ;
-    if (acc == 1 || acc == 2) {
+    if (acc == O_WRONLY || acc == O_RDWR) {
         mode = _OFM_READWRITE;
-        if (flags & 0x0200 /* O_CREAT */) {
+        if (flags & O_TRUNC) {
+            g_Zeebo.pFileMgr->pvt->Remove(g_Zeebo.pFileMgr, norm);
+            if (s_cwd[0] != '\0') {
+                char fallback[260];
+                NormalizePath(name, fallback, sizeof(fallback));
+                g_Zeebo.pFileMgr->pvt->Remove(g_Zeebo.pFileMgr, fallback);
+            }
+            mode = (OpenFileMode)(_OFM_READWRITE | _OFM_CREATE);
+        } else if (flags & O_CREAT) {
             mode = (OpenFileMode)(_OFM_READWRITE | _OFM_CREATE);
         }
     }
