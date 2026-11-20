@@ -257,9 +257,14 @@ static bool InitEGL(int width, int height)
 	if(!egl->eglChooseConfig(s_eglDisplay, cfgAttribs, &cfg, 1, &numCfg) || numCfg < 1)
 		return false;
 
-	s_eglSurface = egl->eglCreateWindowSurface(s_eglDisplay, cfg, NULL, NULL);
-	if(!s_eglSurface){
-		void *nativeWin = Zeebo_GetNativeWindow();
+	const char *vendor = egl->eglQueryString ? egl->eglQueryString(s_eglDisplay, 0x3053 /* EGL_VENDOR */) : NULL;
+	void *nativeWin = NULL;
+	if(vendor && (strstr(vendor, "QUALCOMM") || strstr(vendor, "Qualcomm") || strstr(vendor, "Adreno")))
+		nativeWin = Zeebo_GetNativeWindow();
+
+	s_eglSurface = egl->eglCreateWindowSurface(s_eglDisplay, cfg, nativeWin, NULL);
+	if(!s_eglSurface && !nativeWin){
+		nativeWin = Zeebo_GetNativeWindow();
 		if(nativeWin)
 			s_eglSurface = egl->eglCreateWindowSurface(s_eglDisplay, cfg, nativeWin, NULL);
 	}

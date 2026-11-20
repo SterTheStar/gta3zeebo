@@ -43,7 +43,7 @@ typedef uint8_t  boolean;
 // ---------------------------------------------------------------------------
 // Standard BREW / Zeebo Class IDs
 // ---------------------------------------------------------------------------
-#define AEECLSID_DISPLAY         0x01001002u
+#define AEECLSID_DISPLAY         0x01001001u
 #define AEECLSID_FILEMGR         0x01001003u
 #define AEECLSID_SOUND           0x01001056u
 #define AEECLSID_MEDIAUTIL       0x0100550Du
