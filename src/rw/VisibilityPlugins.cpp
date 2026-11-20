@@ -267,6 +267,21 @@ SetTextureCB(RpMaterial *material, void *data)
 	return material;
 }
 
+#ifdef __ZEEBO__
+static void RenderAtomicNoCull(RpAtomic *atomic)
+{
+	void *prevCull = nil;
+	RwRenderStateGet(rwRENDERSTATECULLMODE, &prevCull);
+	if(prevCull != (void*)rwCULLMODECULLNONE)
+		RwRenderStateSet(rwRENDERSTATECULLMODE, (void*)rwCULLMODECULLNONE);
+	RENDERCALLBACK(atomic);
+	if(prevCull != (void*)rwCULLMODECULLNONE)
+		RwRenderStateSet(rwRENDERSTATECULLMODE, prevCull);
+}
+#else
+#define RenderAtomicNoCull RENDERCALLBACK
+#endif
+
 void
 CVisibilityPlugins::RenderAlphaAtomics(void)
 {
@@ -274,7 +289,7 @@ CVisibilityPlugins::RenderAlphaAtomics(void)
 	for(node = m_alphaList.tail.prev;
 	    node != &m_alphaList.head;
 	    node = node->prev)
-		RENDERCALLBACK(node->item.atomic);
+		RenderAtomicNoCull(node->item.atomic);
 }
 
 void
@@ -446,7 +461,7 @@ CVisibilityPlugins::RenderVehicleHiDetailCB(RpAtomic *atomic)
 			if(dot > 0.0f && ((flags & ATOMIC_FLAG_ANGLECULL) || 0.1f*distsq < dot*dot))
 				return atomic;
 		}
-		RENDERCALLBACK(atomic);
+		RenderAtomicNoCull(atomic);
 	}
 	return atomic;
 }
@@ -471,10 +486,10 @@ CVisibilityPlugins::RenderVehicleHiDetailAlphaCB(RpAtomic *atomic)
 		if(flags & ATOMIC_FLAG_DRAWLAST){
 			// sort before clump
 			if(!InsertAtomicIntoSortedList(atomic, distsq - 0.0001f))
-				RENDERCALLBACK(atomic);
+				RenderAtomicNoCull(atomic);
 		}else{
 			if(!InsertAtomicIntoSortedList(atomic, distsq + dot))
-				RENDERCALLBACK(atomic);
+				RenderAtomicNoCull(atomic);
 		}
 	}
 	return atomic;
@@ -497,7 +512,7 @@ CVisibilityPlugins::RenderVehicleHiDetailCB_BigVehicle(RpAtomic *atomic)
 			if(dot > 0.0f)
 				return atomic;
 		}
-		RENDERCALLBACK(atomic);
+		RenderAtomicNoCull(atomic);
 	}
 	return atomic;
 }
@@ -520,7 +535,7 @@ CVisibilityPlugins::RenderVehicleHiDetailAlphaCB_BigVehicle(RpAtomic *atomic)
 				return atomic;
 
 		if(!InsertAtomicIntoSortedList(atomic, distsq + dot))
-			RENDERCALLBACK(atomic);
+			RenderAtomicNoCull(atomic);
 	}
 	return atomic;
 }
@@ -534,7 +549,7 @@ CVisibilityPlugins::RenderVehicleHiDetailCB_Boat(RpAtomic *atomic)
 	clumpframe = RpClumpGetFrame(RpAtomicGetClump(atomic));
 	distsq = GetDistanceSquaredFromCamera(clumpframe);
 	if(distsq < ms_bigVehicleLod1Dist)
-		RENDERCALLBACK(atomic);
+		RenderAtomicNoCull(atomic);
 	return atomic;
 }
 
@@ -556,7 +571,7 @@ CVisibilityPlugins::RenderVehicleLowDetailCB_BigVehicle(RpAtomic *atomic)
 			if(dot > 0.0f)
 				return atomic;
 		}
-		RENDERCALLBACK(atomic);
+		RenderAtomicNoCull(atomic);
 	}
 	return atomic;
 }
@@ -580,7 +595,7 @@ CVisibilityPlugins::RenderVehicleLowDetailAlphaCB_BigVehicle(RpAtomic *atomic)
 				return atomic;
 
 		if(!InsertAtomicIntoSortedList(atomic, distsq + dot))
-			RENDERCALLBACK(atomic);
+			RenderAtomicNoCull(atomic);
 	}
 	return atomic;
 }
@@ -597,7 +612,7 @@ CVisibilityPlugins::RenderVehicleReallyLowDetailCB(RpAtomic *atomic)
 	if(dist >= ms_vehicleLod0Dist){
 		alpha = GetClumpAlpha(clump);
 		if(alpha == 255)
-			RENDERCALLBACK(atomic);
+			RenderAtomicNoCull(atomic);
 		else
 			RenderAlphaAtomic(atomic, alpha);
 	}
@@ -614,7 +629,7 @@ CVisibilityPlugins::RenderVehicleReallyLowDetailCB_BigVehicle(RpAtomic *atomic)
 	clumpframe = RpClumpGetFrame(RpAtomicGetClump(atomic));
 	distsq = GetDistanceSquaredFromCamera(clumpframe);
 	if(distsq >= ms_bigVehicleLod1Dist)
-		RENDERCALLBACK(atomic);
+		RenderAtomicNoCull(atomic);
 	return atomic;
 }
 
@@ -635,7 +650,7 @@ CVisibilityPlugins::RenderTrainHiDetailCB(RpAtomic *atomic)
 			if(dot > 0.0f && ((flags & ATOMIC_FLAG_ANGLECULL) || 0.1f*distsq < dot*dot))
 				return atomic;
 		}
-		RENDERCALLBACK(atomic);
+		RenderAtomicNoCull(atomic);
 	}
 	return atomic;
 }
@@ -659,10 +674,10 @@ CVisibilityPlugins::RenderTrainHiDetailAlphaCB(RpAtomic *atomic)
 
 		if(flags & ATOMIC_FLAG_DRAWLAST){
 			if(!InsertAtomicIntoSortedList(atomic, distsq))
-				RENDERCALLBACK(atomic);
+				RenderAtomicNoCull(atomic);
 		}else{
 			if(!InsertAtomicIntoSortedList(atomic, distsq + dot))
-				RENDERCALLBACK(atomic);
+				RenderAtomicNoCull(atomic);
 		}
 	}
 	return atomic;

@@ -279,19 +279,27 @@ void CPad::AffectFromZeebo(void)
 	PCTempJoyState.DPadDown       = (s_hidBtnState & (1u << 14)) ? 255 : 0; // D-Pad DOWN
 	PCTempJoyState.DPadRight      = (s_hidBtnState & (1u << 15)) ? 255 : 0; // D-Pad RIGHT
 
-	// Read analog stick axes (AEEHIDPositionInfo: 25 words; X=slot 1, Y=slot 2, center=128)
+	// Read analog stick axes (AEEHIDPositionInfo: 25 words; LX=1, LY=2, RX=3, RY=6, center=128)
 	int32_t posInfo[25];
 	for(int i = 0; i < 25; i++) posInfo[i] = 128;
 	if(s_hidDevice->pvt->GetPositionState(s_hidDevice, posInfo) == AEE_SUCCESS){
 		int lx = (int)(posInfo[1] - 128);
 		int ly = (int)(posInfo[2] - 128);
+		int rx = (int)(posInfo[3] - 128);
+		int ry = (int)(posInfo[6] - 128);
 		const int kDeadzone = 16;
 		if(lx > -kDeadzone && lx < kDeadzone) lx = 0;
 		if(ly > -kDeadzone && ly < kDeadzone) ly = 0;
+		if(rx > -kDeadzone && rx < kDeadzone) rx = 0;
+		if(ry > -kDeadzone && ry < kDeadzone) ry = 0;
 		if(lx < -128) lx = -128; else if(lx > 127) lx = 127;
 		if(ly < -128) ly = -128; else if(ly > 127) ly = 127;
-		PCTempJoyState.LeftStickX = (int16)lx;
-		PCTempJoyState.LeftStickY = (int16)ly;
+		if(rx < -128) rx = -128; else if(rx > 127) rx = 127;
+		if(ry < -128) ry = -128; else if(ry > 127) ry = 127;
+		PCTempJoyState.LeftStickX  = (int16)lx;
+		PCTempJoyState.LeftStickY  = (int16)ly;
+		PCTempJoyState.RightStickX = (int16)rx;
+		PCTempJoyState.RightStickY = (int16)ry;
 	}
 }
 
