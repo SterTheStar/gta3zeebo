@@ -539,7 +539,11 @@ bool CGame::Initialise(const char* datFile)
 	TheConsole.Init();
 #endif
 	CDraw::SetFOV(120.0f);
+#ifdef __ZEEBO__
+	CDraw::ms_fLODDistance = 220.0f;
+#else
 	CDraw::ms_fLODDistance = 500.0f;
+#endif
 
 	LoadingScreen("Loading the Game", "Setup streaming", nil);
 	CStreaming::Init();
@@ -746,7 +750,11 @@ void CGame::ReInitGameObjectVariables(void)
 	CCarCtrl::ReInit();
 	CTimeCycle::Initialise();
 	CDraw::SetFOV(120.0f);
+#ifdef __ZEEBO__
+	CDraw::ms_fLODDistance = 220.0f;
+#else
 	CDraw::ms_fLODDistance = 500.0f;
+#endif
 	CStreaming::RequestBigBuildings(LEVEL_GENERIC);
 	CStreaming::LoadAllRequestedModels(false);
 	CPed::Initialise();

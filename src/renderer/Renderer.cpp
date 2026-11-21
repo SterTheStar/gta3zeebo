@@ -82,7 +82,11 @@ CLinkList<EntityInfo> gSortedBuildings;
 CVector CRenderer::ms_vecCameraPosition;
 CVehicle *CRenderer::m_pFirstPersonVehicle;
 bool CRenderer::m_loadingPriority;
+#ifdef __ZEEBO__
+float CRenderer::ms_lodDistScale = 0.925f;
+#else
 float CRenderer::ms_lodDistScale = 1.2f;
+#endif
 
 // unused
 BlockedRange CRenderer::aBlockedRanges[16];
@@ -241,6 +245,14 @@ CRenderer::RenderOneNonRoad(CEntity *e)
 				veh->pPassengers[i]->Render();
 		BACKFACE_CULLING_OFF;
 	}
+#ifdef __ZEEBO__
+	void *prevVehCull = nil;
+	if(e->IsVehicle()){
+		RwRenderStateGet(rwRENDERSTATECULLMODE, &prevVehCull);
+		if(prevVehCull != (void*)rwCULLMODECULLNONE)
+			RwRenderStateSet(rwRENDERSTATECULLMODE, (void*)rwCULLMODECULLNONE);
+	}
+#endif
 #ifdef EXTRA_MODEL_FLAGS
 	if(!e->IsBuilding() || CModelInfo::GetModelInfo(e->GetModelIndex())->RenderDoubleSided()){
 		BACKFACE_CULLING_OFF;
@@ -256,6 +268,10 @@ CRenderer::RenderOneNonRoad(CEntity *e)
 		CVisibilityPlugins::RenderAlphaAtomics();
 		e->bImBeingRendered = false;
 		BACKFACE_CULLING_ON;
+#ifdef __ZEEBO__
+		if(prevVehCull != (void*)rwCULLMODECULLNONE)
+			RwRenderStateSet(rwRENDERSTATECULLMODE, prevVehCull);
+#endif
 	}
 
 	e->RemoveLighting(resetLights);
