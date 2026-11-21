@@ -670,26 +670,9 @@ extern "C" void Zeebo_OnAppStop(void)
 
 extern "C" boolean Zeebo_OnKeyEvent(AEEEvent evt, uint16_t keyCode, uint32_t dwParam)
 {
+	(void)evt;
+	(void)keyCode;
 	(void)dwParam;
-	if(s_startupStage != STARTUP_NONE && (evt == EVT_KEY_PRESS || evt == EVT_KEY)){
-		SkipStartupSplash();
-		return TRUE;
-	}
-	if(Zeebo_MovieIsPlaying() && (evt == EVT_KEY_PRESS || evt == EVT_KEY)){
-		Zeebo_MovieSkip();
-		return TRUE;
-	}
-	int rsKey = MapZeeboKey(keyCode);
-	if(rsKey == rsNULL) return FALSE;
-	RsKeyStatus ks;
-	ks.keyCharCode = rsKey;
-	if(evt == EVT_KEY_PRESS || evt == EVT_KEY){
-		RsEventHandler(rsKEYDOWN, &ks);
-		return TRUE;
-	}else if(evt == EVT_KEY_RELEASE){
-		RsEventHandler(rsKEYUP, &ks);
-		return TRUE;
-	}
 	return FALSE;
 }
 
