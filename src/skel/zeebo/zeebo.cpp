@@ -427,6 +427,12 @@ void CPad::AffectFromZeebo(void)
 		int ly = NormalizeHidAxis(s_idxLY, posInfo);
 		int rx = NormalizeHidAxis(s_idxRX, posInfo);
 		int ry = NormalizeHidAxis(s_idxRY, posInfo);
+#ifdef AEE_SIMULATOR
+		// BREW 4.0.2 Simulator IHID.dll inverts Y and Rz axes (INVERT:Y / INVERT:Rz in hid_devices.cfg
+		// so UP=+32767 and DOWN=-32768), whereas Zeebo/CPad expects UP=-128 and DOWN=+127.
+		ly = -ly;
+		ry = -ry;
+#endif
 		const int kDeadzone = 16;
 		if(lx > -kDeadzone && lx < kDeadzone) lx = 0;
 		if(ly > -kDeadzone && ly < kDeadzone) ly = 0;
