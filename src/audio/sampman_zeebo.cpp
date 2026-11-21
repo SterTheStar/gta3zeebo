@@ -935,6 +935,10 @@ bool8 cSampleManager::GetChannelUsedFlag(uint32 nChannel)
 
 void cSampleManager::StartChannel(uint32 nChannel)
 {
+#ifdef AEE_SIMULATOR
+	(void)nChannel;
+	return;
+#endif
 	if (nChannel >= NUM_CHANNELS || !g_Zeebo.pMediaUtil || !g_Zeebo.pMediaUtil->pvt)
 		return;
 
@@ -1042,6 +1046,12 @@ void cSampleManager::StartPreloadedStreamedFile(uint8 nStream)
 
 bool8 cSampleManager::StartStreamedFile(uint8 nFile, uint32 nPos, uint8 nStream)
 {
+#ifdef AEE_SIMULATOR
+	(void)nFile;
+	(void)nPos;
+	(void)nStream;
+	return FALSE;
+#endif
 	if (nStream >= MAX_STREAMS || nFile >= TOTAL_STREAMED_SOUNDS)
 		return FALSE;
 	if (!g_Zeebo.pMediaUtil || !g_Zeebo.pMediaUtil->pvt)
