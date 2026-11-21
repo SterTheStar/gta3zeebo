@@ -12,7 +12,11 @@
 #include "Frontend.h"
 #include "Pad.h"
 #include "PCSave.h"
+#include "FileMgr.h"
 #include "Streaming.h"
+#ifdef _WIN32
+#include <direct.h>
+#endif
 
 #include "../../platform/zeebo/zeebo_brew.h"
 #include "../../platform/zeebo/zeebo_movie.h"
@@ -85,6 +89,9 @@ static uint32_t    s_prevHidBtn    = 0;
 
 void _psCreateFolder(const char *path)
 {
+#ifdef _WIN32
+	if(path) _mkdir(path);
+#endif
 	if(path && g_Zeebo.pFileMgr && g_Zeebo.pFileMgr->pvt){
 		g_Zeebo.pFileMgr->pvt->MkDir(g_Zeebo.pFileMgr, path);
 	}
@@ -145,6 +152,7 @@ RwBool psInitialize(void)
 	RsGlobal.maxFPS       = 30;
 	RsGlobal.quit         = FALSE;
 
+	CFileMgr::Initialise();
 	C_PcSave::SetSaveDirectory(_psGetUserFilesFolder());
 
 	return TRUE;

@@ -2,8 +2,8 @@
 
 class CFileMgr
 {
-	static char ms_rootDirName[128];
-	static char ms_dirName[128];
+	static char ms_rootDirName[260];
+	static char ms_dirName[260];
 public:
 	static void Initialise(void);
 	static void ChangeDir(const char *dir);

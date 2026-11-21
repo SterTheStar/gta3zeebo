@@ -107,6 +107,9 @@ static boolean Applet_HandleEvent(IApplet* po, AEEEvent eCode, uint16_t wParam, 
     (void)po;
     switch (eCode) {
     case EVT_APP_START:
+#ifdef AEE_SIMULATOR
+        SimSetModuleCwd();
+#endif
         if (!Zeebo_OnAppStart()) {
             return FALSE;
         }
