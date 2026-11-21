@@ -228,6 +228,123 @@ RwInt32 _psGetNumVideModes(void)
 // ---------------------------------------------------------------------------
 // Z-Pad / IHID polling -> RsPad / RsKeyboard events
 // ---------------------------------------------------------------------------
+// Standard BREW / Tectoy IHID Joystick Button & Axis UIDs (AEEHIDDevice_Joystick.h)
+#define ZEEBO_UID_DPAD_UP         0x0106c3feu
+#define ZEEBO_UID_DPAD_LEFT       0x0106c3ffu
+#define ZEEBO_UID_DPAD_DOWN       0x0106c400u
+#define ZEEBO_UID_DPAD_RIGHT      0x0106c401u
+#define ZEEBO_UID_START           0x0106c402u
+#define ZEEBO_UID_BACK            0x0106c403u
+#define ZEEBO_UID_LTHUMB          0x0106c404u
+#define ZEEBO_UID_RTHUMB          0x0106c405u
+#define ZEEBO_UID_ZL              0x0106c406u
+#define ZEEBO_UID_L2              0x0106c407u
+#define ZEEBO_UID_ZR              0x0106c408u
+#define ZEEBO_UID_R2              0x0106c409u
+#define ZEEBO_UID_BTN_1           0x0106c40au
+#define ZEEBO_UID_BTN_2           0x0106c40bu
+#define ZEEBO_UID_BTN_3           0x0106c40cu
+#define ZEEBO_UID_BTN_4           0x0106c40du
+
+#define ZEEBO_UID_AXIS_RX         0x0106c4ceu
+#define ZEEBO_UID_AXIS_RY         0x0106c4cfu
+#define ZEEBO_UID_AXIS_LX         0x0106c4d0u
+#define ZEEBO_UID_AXIS_LY         0x0106c4d1u
+
+static int32_t s_axisMin[25];
+static int32_t s_axisMax[25];
+static int32_t s_axisUid[25];
+static int     s_idxLX = 1;
+static int     s_idxLY = 2;
+static int     s_idxRX = 3;
+static int     s_idxRY = 6;
+static boolean s_axesQueried = FALSE;
+
+static void QueryPadAxes(IHIDDevice *dev)
+{
+	for(int i = 0; i < 25; i++){
+		s_axisMin[i] = 0;
+		s_axisMax[i] = 0;
+		s_axisUid[i] = 0;
+	}
+	s_idxLX = 1;
+	s_idxLY = 2;
+	s_idxRX = 3;
+	s_idxRY = 6;
+	s_axesQueried = FALSE;
+	if(!dev || !dev->pvt) return;
+
+	boolean hasMin = (dev->pvt->GetMinPositionInfo && dev->pvt->GetMinPositionInfo(dev, s_axisMin) == AEE_SUCCESS);
+	boolean hasMax = (dev->pvt->GetMaxPositionInfo && dev->pvt->GetMaxPositionInfo(dev, s_axisMax) == AEE_SUCCESS);
+	boolean hasUid = (dev->pvt->GetAxesInfo && dev->pvt->GetAxesInfo(dev, s_axisUid) == AEE_SUCCESS);
+
+	if(hasUid){
+		for(int i = 1; i < 25; i++){
+			uint32_t u = (uint32_t)s_axisUid[i];
+			if(u == ZEEBO_UID_AXIS_LX)      s_idxLX = i;
+			else if(u == ZEEBO_UID_AXIS_LY) s_idxLY = i;
+			else if(u == ZEEBO_UID_AXIS_RX) s_idxRX = i;
+			else if(u == ZEEBO_UID_AXIS_RY) s_idxRY = i;
+		}
+	}
+	s_axesQueried = (hasMin && hasMax) ? TRUE : FALSE;
+}
+
+static int NormalizeHidAxis(int slot, const int32_t *posInfo)
+{
+	if(slot < 1 || slot >= 25) return 0;
+	int32_t raw = posInfo[slot];
+
+	if(s_axesQueried){
+		int32_t mn = s_axisMin[slot];
+		int32_t mx = s_axisMax[slot];
+		// In BREW 4.0.2 Simulator IHID.dll, unpresent/unmapped axes report min==max (0..0).
+		// Return 0 (centered) instead of computing 0 - 128 = -128 (constant UP/LEFT drift!).
+		if(mx <= mn) return 0;
+		int32_t center = (mn + mx) / 2;
+		int32_t half   = (mx - mn) / 2;
+		if(half <= 0) return 0;
+		int32_t norm = ((raw - center) * 127) / half;
+		if(norm < -128) norm = -128;
+		else if(norm > 127) norm = 127;
+		return (int)norm;
+	}
+
+#ifdef AEE_SIMULATOR
+	// If GetMinPositionInfo/GetMaxPositionInfo is unavailable in Simulator and raw is 0, treat as centered
+	if(raw == 0) return 0;
+#endif
+	int v = (int)(raw - 128);
+	if(v < -128) v = -128;
+	else if(v > 127) v = 127;
+	return v;
+}
+
+static int MapHidButtonToZeeboIndex(const AEEHIDButtonInfo &btn)
+{
+	switch(btn.dwUID){
+	case ZEEBO_UID_BTN_2:      return 0;  // Z-Pad Button 1 (South / Cross)
+	case ZEEBO_UID_BTN_3:      return 1;  // Z-Pad Button 2 (East / Circle)
+	case ZEEBO_UID_BTN_1:      return 2;  // Z-Pad Button 4 (West / Square)
+	case ZEEBO_UID_BTN_4:      return 3;  // Z-Pad Button 3 (North / Triangle)
+	case ZEEBO_UID_ZR:         return 4;  // ZR (RightShoulder1)
+	case ZEEBO_UID_L2:         return 5;  // L2 (LeftShoulder2)
+	case ZEEBO_UID_ZL:         return 6;  // ZL (LeftShoulder1)
+	case ZEEBO_UID_R2:         return 7;  // R2 (RightShoulder2)
+	case ZEEBO_UID_RTHUMB:     return 8;  // R3
+	case ZEEBO_UID_BACK:       return 9;  // Back / Select
+	case ZEEBO_UID_LTHUMB:     return 10; // L3
+	case ZEEBO_UID_START:      return 11; // HOME / Start
+	case ZEEBO_UID_DPAD_UP:    return 12; // D-Pad UP
+	case ZEEBO_UID_DPAD_LEFT:  return 13; // D-Pad LEFT
+	case ZEEBO_UID_DPAD_DOWN:  return 14; // D-Pad DOWN
+	case ZEEBO_UID_DPAD_RIGHT: return 15; // D-Pad RIGHT
+	default:
+		break;
+	}
+	return (btn.dwID < 32) ? (int)btn.dwID : -1;
+}
+
 static void TryOpenPad(void)
 {
 	if(s_hidDevice || !g_Zeebo.pHID || !g_Zeebo.pHID->pvt) return;
@@ -242,6 +359,7 @@ static void TryOpenPad(void)
 		if(g_Zeebo.pHID->pvt->CreateDevice(g_Zeebo.pHID, handles[0], &dev) == AEE_SUCCESS && dev){
 			s_hidDevice = dev;
 			s_hidBtnState = 0;
+			QueryPadAxes(dev);
 		}
 	}
 }
@@ -275,9 +393,10 @@ void CPad::AffectFromZeebo(void)
 	uint32_t ts = 0;
 	boolean dropped = FALSE;
 	while(s_hidDevice->pvt->GetNextButtonEvent(s_hidDevice, &btn, &ts, &dropped) == AEE_SUCCESS){
-		if(btn.dwID < 32){
-			if(btn.dwState) s_hidBtnState |=  (1u << btn.dwID);
-			else            s_hidBtnState &= ~(1u << btn.dwID);
+		int idx = MapHidButtonToZeeboIndex(btn);
+		if(idx >= 0 && idx < 32){
+			if(btn.dwState) s_hidBtnState |=  (1u << idx);
+			else            s_hidBtnState &= ~(1u << idx);
 		}
 	}
 	s_prevHidBtn = s_hidBtnState;
@@ -300,14 +419,14 @@ void CPad::AffectFromZeebo(void)
 	PCTempJoyState.DPadDown       = (s_hidBtnState & (1u << 14)) ? 255 : 0; // D-Pad DOWN
 	PCTempJoyState.DPadRight      = (s_hidBtnState & (1u << 15)) ? 255 : 0; // D-Pad RIGHT
 
-	// Read analog stick axes (AEEHIDPositionInfo: 25 words; LX=1, LY=2, RX=3, RY=6, center=128)
+	// Read analog stick axes normalized via GetMinPositionInfo/GetMaxPositionInfo/GetAxesInfo
 	int32_t posInfo[25];
 	for(int i = 0; i < 25; i++) posInfo[i] = 128;
 	if(s_hidDevice->pvt->GetPositionState(s_hidDevice, posInfo) == AEE_SUCCESS){
-		int lx = (int)(posInfo[1] - 128);
-		int ly = (int)(posInfo[2] - 128);
-		int rx = (int)(posInfo[3] - 128);
-		int ry = (int)(posInfo[6] - 128);
+		int lx = NormalizeHidAxis(s_idxLX, posInfo);
+		int ly = NormalizeHidAxis(s_idxLY, posInfo);
+		int rx = NormalizeHidAxis(s_idxRX, posInfo);
+		int ry = NormalizeHidAxis(s_idxRY, posInfo);
 		const int kDeadzone = 16;
 		if(lx > -kDeadzone && lx < kDeadzone) lx = 0;
 		if(ly > -kDeadzone && ly < kDeadzone) ly = 0;
