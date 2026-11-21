@@ -32,6 +32,9 @@ public:
 #define POOLFLAG_ID     0x7f
 #define POOLFLAG_ISFREE 0x80
 
+#ifdef AEE_SIMULATOR
+extern "C" void Zeebo_PoolLog(const char*, int, int, int);
+#endif
 template<typename T, typename U = T>
 class CPool
 {
@@ -90,8 +93,12 @@ public:
 	}
 	int32 GetSize(void) const { return m_size; }
 	T *New(void){
-		if(!m_flags || !m_entries || m_size <= 0)
+		if(!m_flags || !m_entries || m_size <= 0){
+#ifdef AEE_SIMULATOR
+			Zeebo_PoolLog("pool invalid", (int)m_size, (int)(m_flags!=0), (int)(m_entries!=0));
+#endif
 			return nil;
+		}
 		if(m_allocPtr < -1 || m_allocPtr >= m_size)
 			m_allocPtr = 0;
 		bool wrapped = false;
@@ -100,13 +107,21 @@ public:
 			if (++m_allocPtr >= m_size) {
 				m_allocPtr = 0;
 				if (wrapped)
-					return nil;
+					{
+#ifdef AEE_SIMULATOR
+ Zeebo_PoolLog("pool full", (int)m_size, 0, 0);
+#endif
+ return nil; }
 				wrapped = true;
 			}
 #else
 			if(++m_allocPtr == m_size){
 				if(wrapped)
-					return nil;
+					{
+#ifdef AEE_SIMULATOR
+ Zeebo_PoolLog("pool full", (int)m_size, 0, 0);
+#endif
+ return nil; }
 				wrapped = true;
 				m_allocPtr = 0;
 			}

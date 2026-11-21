@@ -661,6 +661,10 @@ extern "C" boolean Zeebo_OnAppStart(void)
 	return FALSE;
 }
 
+#ifdef AEE_SIMULATOR
+extern "C" void Zeebo_SimFileLog(const char* fmt, ...);
+#endif
+
 extern "C" void Zeebo_OnFrameTick(void)
 {
 	if(!s_rwInitialized || RsGlobal.quit){
@@ -783,6 +787,17 @@ extern "C" void Zeebo_OnFrameTick(void)
 		break;
 
 	case GS_PLAYING_GAME:
+#ifdef AEE_SIMULATOR
+	{
+		static int s_lastActive = -1;
+		static int s_lastScreen = -1;
+		if ((int)FrontEndMenuManager.m_bMenuActive != s_lastActive || FrontEndMenuManager.m_nCurrScreen != s_lastScreen) {
+			s_lastActive = (int)FrontEndMenuManager.m_bMenuActive;
+			s_lastScreen = FrontEndMenuManager.m_nCurrScreen;
+			Zeebo_SimFileLog("[MENU] active=%d screen=%d option=%d\n", s_lastActive, s_lastScreen, FrontEndMenuManager.m_nCurrOption);
+		}
+	}
+#endif
 		RsEventHandler(rsIDLE, (void*)TRUE);
 		break;
 

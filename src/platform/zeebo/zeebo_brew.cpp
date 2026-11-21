@@ -8,6 +8,7 @@
 #include <windows.h>
 static char s_simLogPath[MAX_PATH] = { 0 };
 static PVOID s_simVehHandle = NULL;
+static volatile DWORD s_wdHeartbeat = 0;
 
 static void SimWriteLogFile(const char* text)
 {
@@ -18,6 +19,16 @@ static void SimWriteLogFile(const char* text)
         fflush(fp);
         fclose(fp);
     }
+}
+
+extern "C" void Zeebo_SimFileLog(const char* fmt, ...)
+{
+    char buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    SimWriteLogFile(buf);
 }
 
 static LONG WINAPI SimVectoredCrashHandler(PEXCEPTION_POINTERS ep)
@@ -176,8 +187,14 @@ static void FrameTimerCallback(void* pUser)
     if (s_nextFrameMs == 0 || (int32_t)(now - s_nextFrameMs) > 66) {
         s_nextFrameMs = now;
     }
+#ifdef AEE_SIMULATOR
+    s_wdHeartbeat = GetTickCount();
+#endif
 
     Zeebo_OnFrameTick();
+#ifdef AEE_SIMULATOR
+    s_wdHeartbeat = GetTickCount();
+#endif
     s_nextFrameMs += 33u;
 
     if (g_Zeebo.bRunning && g_Zeebo.pShell) {
@@ -191,10 +208,76 @@ static void FrameTimerCallback(void* pUser)
         } else if (rem > 33) {
             rem = 33;
         }
-        ISHELL_SetTimer(g_Zeebo.pShell, rem, FrameTimerCallback, NULL);
+        int tRc = ISHELL_SetTimer(g_Zeebo.pShell, rem, FrameTimerCallback, NULL);
+#ifdef AEE_SIMULATOR
+        if (tRc != AEE_SUCCESS) {
+            Zeebo_SimFileLog("[TMR] ISHELL_SetTimer failed rc=%d rem=%d\n", tRc, (int)rem);
+        }
+#endif
     }
 }
 
+#ifdef AEE_SIMULATOR
+// ---- Hang watchdog (simulator only): logs main-thread stack RVAs when frames stall ----
+static HANDLE s_wdMainThread = NULL;
+static volatile LONG s_wdStarted = 0;
+
+static DWORD WINAPI SimWatchdogProc(LPVOID)
+{
+    HMODULE self = NULL;
+    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                       (LPCSTR)&SimWatchdogProc, &self);
+    DWORD base = (DWORD)(size_t)self;
+    IMAGE_NT_HEADERS* nt = (IMAGE_NT_HEADERS*)(base + ((IMAGE_DOS_HEADER*)base)->e_lfanew);
+    DWORD size = nt->OptionalHeader.SizeOfImage;
+    int logged = 0;
+    for (;;) {
+        Sleep(1000);
+        DWORD hb = s_wdHeartbeat;
+        if (!hb || !s_wdMainThread) continue;
+        if (GetTickCount() - hb < 3000) { logged = 0; continue; }
+        if (logged >= 4) continue;
+        logged++;
+        if (SuspendThread(s_wdMainThread) == (DWORD)-1) continue;
+        CONTEXT ctx; memset(&ctx, 0, sizeof(ctx));
+        ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+        char line[4096]; int n = 0;
+        if (GetThreadContext(s_wdMainThread, &ctx)) {
+            n += _snprintf(line + n, sizeof(line) - n, "[WD] main thread stalled %lums EIP=%08lX (rva %08lX) ESP=%08lX\n",
+                           GetTickCount() - hb, ctx.Eip, ctx.Eip - base, ctx.Esp);
+            n += _snprintf(line + n, sizeof(line) - n, "[WD] game RVAs on stack:");
+            const DWORD* sp = (const DWORD*)ctx.Esp;
+            int found = 0;
+            DWORD stackBuf[0x1000];
+            SIZE_T bytesRead = 0;
+            if (ReadProcessMemory(GetCurrentProcess(), sp, stackBuf, sizeof(stackBuf), &bytesRead)) {
+                int count = (int)(bytesRead / sizeof(DWORD));
+                for (int i = 0; i < count && found < 40; i++) {
+                    DWORD v = stackBuf[i];
+                    if (v >= base && v < base + size) {
+                        n += _snprintf(line + n, sizeof(line) - n, " %X", v - base);
+                        found++;
+                    }
+                }
+            }
+            n += _snprintf(line + n, sizeof(line) - n, "\n");
+        }
+        ResumeThread(s_wdMainThread);
+        line[sizeof(line) - 1] = 0;
+        SimWriteLogFile(line);
+    }
+    return 0;
+}
+
+static void SimWatchdogStart(void)
+{
+    if (InterlockedExchange(&s_wdStarted, 1)) return;
+    DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &s_wdMainThread,
+                    THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, 0);
+    s_wdHeartbeat = GetTickCount();
+    CreateThread(NULL, 0, SimWatchdogProc, NULL, 0, NULL);
+}
+#endif
 static boolean Applet_HandleEvent(IApplet* po, AEEEvent eCode, uint16_t wParam, uint32_t dwParam)
 {
     (void)po;
@@ -207,6 +290,9 @@ static boolean Applet_HandleEvent(IApplet* po, AEEEvent eCode, uint16_t wParam, 
             return FALSE;
         }
         g_Zeebo.bRunning = TRUE;
+#ifdef AEE_SIMULATOR
+    SimWatchdogStart();
+#endif
         s_nextFrameMs = 0;
         if (g_Zeebo.pShell) {
             ISHELL_SetTimer(g_Zeebo.pShell, 1, FrameTimerCallback, NULL);
@@ -214,6 +300,9 @@ static boolean Applet_HandleEvent(IApplet* po, AEEEvent eCode, uint16_t wParam, 
         return TRUE;
 
     case EVT_APP_STOP:
+#ifdef AEE_SIMULATOR
+        Zeebo_SimFileLog("[BREW] EVT_APP_STOP\n");
+#endif
         g_Zeebo.bRunning = FALSE;
         if (g_Zeebo.pShell) {
             ISHELL_CancelTimer(g_Zeebo.pShell, FrameTimerCallback, NULL);
@@ -222,12 +311,21 @@ static boolean Applet_HandleEvent(IApplet* po, AEEEvent eCode, uint16_t wParam, 
         return TRUE;
 
     case EVT_APP_SUSPEND:
+#ifdef AEE_SIMULATOR
+        Zeebo_SimFileLog("[BREW] EVT_APP_SUSPEND\n");
+#endif
+        if (g_Zeebo.pfnAudioSuspend) {
+            g_Zeebo.pfnAudioSuspend();
+        }
         if (g_Zeebo.pShell) {
             ISHELL_CancelTimer(g_Zeebo.pShell, FrameTimerCallback, NULL);
         }
         return TRUE;
 
     case EVT_APP_RESUME:
+#ifdef AEE_SIMULATOR
+        Zeebo_SimFileLog("[BREW] EVT_APP_RESUME\n");
+#endif
         s_nextFrameMs = 0;
         if (g_Zeebo.bRunning && g_Zeebo.pShell) {
             ISHELL_SetTimer(g_Zeebo.pShell, 16, FrameTimerCallback, NULL);
@@ -401,3 +499,7 @@ int AEEMod_Load(IShell* pIShell, void* ph, IModule** ppMod)
     *ppMod = (IModule*)mod;
     return AEE_SUCCESS;
 }
+
+#ifdef AEE_SIMULATOR
+extern "C" void Zeebo_PoolLog(const char* m, int a, int b, int c){ Zeebo_Log("[POOL] %s size=%d a=%d b=%d\n", m, a, b, c); }
+#endif

@@ -715,6 +715,7 @@ int8 CRunningScript::ProcessCommands300To399(int32 command)
 			return 0;
 #endif
 		cAudioScriptObject* obj = new cAudioScriptObject();
+		if(obj == nil) return 0;
 		obj->Posn = *(CVector*)&ScriptParams[0];
 		obj->AudioId = ScriptParams[3];
 		obj->AudioEntity = AEHANDLE_NONE;
@@ -725,6 +726,7 @@ int8 CRunningScript::ProcessCommands300To399(int32 command)
 	{
 		CollectParameters(&m_nIp, 4);
 		cAudioScriptObject* obj = new cAudioScriptObject();
+		if(obj == nil){ ScriptParams[0] = -1; StoreParameters(&m_nIp, 1); return 0; }
 		obj->Posn = *(CVector*)&ScriptParams[0];
 		obj->AudioId = ScriptParams[3];
 		obj->AudioEntity = DMAudio.CreateLoopingScriptObject(obj);
