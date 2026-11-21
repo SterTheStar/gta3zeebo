@@ -540,7 +540,7 @@ bool CGame::Initialise(const char* datFile)
 #endif
 	CDraw::SetFOV(120.0f);
 #ifdef __ZEEBO__
-	CDraw::ms_fLODDistance = 220.0f;
+	CDraw::ms_fLODDistance = 150.0f;
 #else
 	CDraw::ms_fLODDistance = 500.0f;
 #endif
@@ -751,7 +751,7 @@ void CGame::ReInitGameObjectVariables(void)
 	CTimeCycle::Initialise();
 	CDraw::SetFOV(120.0f);
 #ifdef __ZEEBO__
-	CDraw::ms_fLODDistance = 220.0f;
+	CDraw::ms_fLODDistance = 150.0f;
 #else
 	CDraw::ms_fLODDistance = 500.0f;
 #endif

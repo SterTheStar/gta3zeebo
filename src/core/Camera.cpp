@@ -731,8 +731,8 @@ CCamera::Process(void)
 #endif
 #ifdef __ZEEBO__
 	// Lower draw & generation distance to reduce triangle, draw-call, and streaming load on Zeebo
-	GenerationDistMultiplier *= 0.75f;
-	LODDistMultiplier *= 0.70f;
+	GenerationDistMultiplier *= 0.60f;
+	LODDistMultiplier *= 0.55f;
 #endif
 
 	// Keep track of speed
