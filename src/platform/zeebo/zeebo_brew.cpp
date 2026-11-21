@@ -26,16 +26,6 @@ static void SimSetModuleCwd(void)
 
 ZeeboRuntime g_Zeebo = { 0 };
 
-static void Zeebo_TraceFile(const char* msg)
-{
-    if (!g_Zeebo.pFileMgr || !g_Zeebo.pFileMgr->pvt || !msg) return;
-    IFile* f = g_Zeebo.pFileMgr->pvt->OpenFile(g_Zeebo.pFileMgr, "zeebo_trace.txt", (OpenFileMode)(_OFM_READWRITE | _OFM_CREATE | _OFM_APPEND));
-    if (!f) return;
-    f->pvt->Seek(f, _SEEK_END, 0);
-    f->pvt->Write(f, msg, (uint32_t)strlen(msg));
-    f->pvt->Release(f);
-}
-
 void Zeebo_Log(const char* fmt, ...)
 {
     char buf[512];
@@ -43,7 +33,6 @@ void Zeebo_Log(const char* fmt, ...)
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
-    Zeebo_TraceFile(buf);
     if (g_Zeebo.pHelpers && g_Zeebo.pHelpers->pfnDbgPrintf) {
         g_Zeebo.pHelpers->pfnDbgPrintf("%s", buf);
     }

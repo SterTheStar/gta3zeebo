@@ -218,8 +218,8 @@ CStreaming::Init2(void)
 	// PC only, figure out how much memory we got
 #ifdef __ZEEBO__
 #define MB (1024*1024)
-	ms_memoryAvailable = 36*MB;
-	desiredNumVehiclesLoaded = 12;
+	ms_memoryAvailable = 14*MB;
+	desiredNumVehiclesLoaded = 8;
 #undef MB
 #elif defined(GTA_PC)
 #define MB (1024*1024)
@@ -377,8 +377,8 @@ CStreaming::LoadCdDirectory(void)
 
 #ifdef __ZEEBO__
 #define MB (1024*1024)
-	ms_memoryAvailable = 36*MB;
-	desiredNumVehiclesLoaded = 12;
+	ms_memoryAvailable = 14*MB;
+	desiredNumVehiclesLoaded = 8;
 #undef MB
 #elif defined(GTA_PC)
 	ms_imageOffsets[0] = 0;

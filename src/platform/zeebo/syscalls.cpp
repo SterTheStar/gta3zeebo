@@ -55,10 +55,19 @@ void* __dso_handle = 0;
 static uint8_t s_heap[64 * 1024];
 static size_t  s_heapOffset = 0;
 
+extern "C" int Zeebo_PurgeMemoryForAlloc(size_t needed);
+
 void* malloc(size_t size)
 {
     if (g_Zeebo.pHelpers && g_Zeebo.pHelpers->pfnMalloc) {
-        return g_Zeebo.pHelpers->pfnMalloc((uint32_t)(size ? size : 1));
+        uint32_t req = (uint32_t)(size ? size : 1);
+        void* p = g_Zeebo.pHelpers->pfnMalloc(req);
+        if (!p && g_Zeebo.bRunning) {
+            if (Zeebo_PurgeMemoryForAlloc(req)) {
+                p = g_Zeebo.pHelpers->pfnMalloc(req);
+            }
+        }
+        return p;
     }
     return NULL;
 }
@@ -73,7 +82,14 @@ void free(void* ptr)
 void* realloc(void* ptr, size_t size)
 {
     if (g_Zeebo.pHelpers && g_Zeebo.pHelpers->pfnRealloc) {
-        return g_Zeebo.pHelpers->pfnRealloc(ptr, (uint32_t)(size ? size : 1));
+        uint32_t req = (uint32_t)(size ? size : 1);
+        void* p = g_Zeebo.pHelpers->pfnRealloc(ptr, req);
+        if (!p && g_Zeebo.bRunning) {
+            if (Zeebo_PurgeMemoryForAlloc(req)) {
+                p = g_Zeebo.pHelpers->pfnRealloc(ptr, req);
+            }
+        }
+        return p;
     }
     return NULL;
 }

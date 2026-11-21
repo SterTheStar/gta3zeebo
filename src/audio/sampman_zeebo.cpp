@@ -29,10 +29,10 @@ static FILE* s_fpSfxRaw = NULL;
 static int32 s_sfxRawSize = 0;
 
 // Small LRU cache for decoded/read raw PCM chunks from SFX.RAW to avoid repeated disk reads
-#define ZEEBO_SFX_CACHE_SLOTS 48
-#define ZEEBO_SFX_CACHE_MAX_BYTES (2 * 1024 * 1024)
-#define ZEEBO_MAX_SINGLE_SFX_BYTES (512 * 1024)
-#define ZEEBO_MAX_ACTIVE_SFX_VOICES 24
+#define ZEEBO_SFX_CACHE_SLOTS 32
+#define ZEEBO_SFX_CACHE_MAX_BYTES (1 * 1024 * 1024)
+#define ZEEBO_MAX_SINGLE_SFX_BYTES (384 * 1024)
+#define ZEEBO_MAX_ACTIVE_SFX_VOICES 12
 
 struct SfxCacheEntry {
 	uint32 sfxId;
@@ -181,6 +181,11 @@ static void ReleaseChannelMedia(ZeeboSfxChannel& ch)
 	}
 	ch.media = NULL;
 	ch.lastBrewVol = -1;
+	if (ch.wavBuf && ch.wavCap > 32768u) {
+		free(ch.wavBuf);
+		ch.wavBuf = NULL;
+		ch.wavCap = 0;
+	}
 }
 
 static bool IsMediaPlaying(IMedia* m)
@@ -963,6 +968,21 @@ bool8 cSampleManager::InitialiseSampleBanks(void)
 	Zeebo_Log("[AUD] Loaded sfx.SDT (%d samples) & SFX.RAW (%d bytes)\n",
 	          (int)TOTAL_AUDIO_SAMPLES, (int)s_sfxRawSize);
 	return TRUE;
+}
+
+extern "C" void Zeebo_PurgeAudioCache(void)
+{
+	ClearSfxCache();
+	for (int i = 0; i < NUM_CHANNELS; i++) {
+		if (s_channels[i].media && !IsMediaPlaying(s_channels[i].media)) {
+			ReleaseChannelMedia(s_channels[i]);
+		}
+		if (!s_channels[i].media && s_channels[i].wavBuf) {
+			free(s_channels[i].wavBuf);
+			s_channels[i].wavBuf = NULL;
+			s_channels[i].wavCap = 0;
+		}
+	}
 }
 
 #endif // __ZEEBO__

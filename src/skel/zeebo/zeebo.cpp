@@ -12,6 +12,7 @@
 #include "Frontend.h"
 #include "Pad.h"
 #include "PCSave.h"
+#include "Streaming.h"
 
 #include "../../platform/zeebo/zeebo_brew.h"
 #include "../../platform/zeebo/zeebo_movie.h"
@@ -690,6 +691,28 @@ extern "C" boolean Zeebo_OnKeyEvent(AEEEvent evt, uint16_t keyCode, uint32_t dwP
 		return TRUE;
 	}
 	return FALSE;
+}
+
+extern "C" void Zeebo_PurgeAudioCache(void);
+
+extern "C" int Zeebo_PurgeMemoryForAlloc(size_t needed)
+{
+	(void)needed;
+	static bool s_inPurge = false;
+	if(s_inPurge) return 0;
+	s_inPurge = true;
+
+	Zeebo_PurgeAudioCache();
+	if(s_rwInitialized && gGameState == GS_PLAYING_GAME){
+		for(int i = 0; i < 12; i++){
+			if(!CStreaming::RemoveLeastUsedModel()){
+				break;
+			}
+		}
+	}
+
+	s_inPurge = false;
+	return 1;
 }
 
 #endif // __ZEEBO__
