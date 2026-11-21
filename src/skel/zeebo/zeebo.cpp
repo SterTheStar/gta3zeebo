@@ -14,6 +14,8 @@
 #include "PCSave.h"
 #include "FileMgr.h"
 #include "Streaming.h"
+#include "Timer.h"
+#include "DMAudio.h"
 #ifdef _WIN32
 #include <direct.h>
 #endif
@@ -662,6 +664,32 @@ extern "C" void Zeebo_OnFrameTick(void)
 	default:
 		break;
 	}
+
+	if(FrontEndMenuManager.m_bWantToRestart){
+		FrontEndMenuManager.UnloadTextures();
+		CPad::ResetCheats();
+		CPad::StopPadsShaking();
+		DMAudio.ChangeMusicMode(MUSICMODE_DISABLE);
+
+		if(FrontEndMenuManager.m_bWantToLoad){
+			CGame::ShutDownForRestart();
+			CGame::InitialiseWhenRestarting();
+			DMAudio.ChangeMusicMode(MUSICMODE_GAME);
+			LoadSplash(GetLevelSplashScreen(CGame::currLevel));
+			FrontEndMenuManager.m_bWantToLoad = false;
+		}else{
+			if(gGameState == GS_PLAYING_GAME)
+				CGame::ShutDown();
+			CTimer::Stop();
+			if(FrontEndMenuManager.m_bFirstTime == true){
+				gGameState = GS_INIT_FRONTEND;
+			}else{
+				gGameState = GS_INIT_PLAYING_GAME;
+			}
+		}
+		FrontEndMenuManager.m_bFirstTime = false;
+		FrontEndMenuManager.m_bWantToRestart = false;
+	}
 }
 
 extern "C" void Zeebo_OnAppStop(void)
@@ -669,6 +697,9 @@ extern "C" void Zeebo_OnAppStop(void)
 	FreeStartupSplash();
 	Zeebo_MovieStop();
 	if(s_rwInitialized){
+		if(gGameState == GS_PLAYING_GAME)
+			CGame::ShutDown();
+		DMAudio.Terminate();
 		RsEventHandler(rsRWTERMINATE, nil);
 		RsEventHandler(rsTERMINATE, nil);
 		s_rwInitialized = FALSE;

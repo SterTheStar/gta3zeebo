@@ -90,6 +90,10 @@ public:
 	}
 	int32 GetSize(void) const { return m_size; }
 	T *New(void){
+		if(!m_flags || !m_entries || m_size <= 0)
+			return nil;
+		if(m_allocPtr < -1 || m_allocPtr >= m_size)
+			m_allocPtr = 0;
 		bool wrapped = false;
 		do
 #ifdef FIX_BUGS
@@ -126,7 +130,11 @@ public:
 				return;
 	}
 	void Delete(T *entry){
+		if(!entry || !m_entries || !m_flags || m_size <= 0)
+			return;
 		int i = GetJustIndex(entry);
+		if(i < 0 || i >= m_size)
+			return;
 		SetIsFree(i, true);
 		if(i < m_allocPtr)
 			m_allocPtr = i;

@@ -71,15 +71,15 @@ CPools::ShutDown(void)
 	debug("AudioScriptObjects left %d\n", ms_pAudioScriptObjectPool->GetNoOfUsedSpaces());
 	printf("Shutdown pool started\n");
 
-	delete ms_pPtrNodePool;
-	delete ms_pEntryInfoNodePool;
-	delete ms_pPedPool;
-	delete ms_pVehiclePool;
-	delete ms_pBuildingPool;
-	delete ms_pTreadablePool;
-	delete ms_pObjectPool;
-	delete ms_pDummyPool;
-	delete ms_pAudioScriptObjectPool;
+	delete ms_pPtrNodePool; ms_pPtrNodePool = nil;
+	delete ms_pEntryInfoNodePool; ms_pEntryInfoNodePool = nil;
+	delete ms_pPedPool; ms_pPedPool = nil;
+	delete ms_pVehiclePool; ms_pVehiclePool = nil;
+	delete ms_pBuildingPool; ms_pBuildingPool = nil;
+	delete ms_pTreadablePool; ms_pTreadablePool = nil;
+	delete ms_pObjectPool; ms_pObjectPool = nil;
+	delete ms_pDummyPool; ms_pDummyPool = nil;
+	delete ms_pAudioScriptObjectPool; ms_pAudioScriptObjectPool = nil;
 
 	printf("Shutdown pool done\n");
 }

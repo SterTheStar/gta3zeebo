@@ -6,6 +6,87 @@
 #include <string.h>
 #ifdef AEE_SIMULATOR
 #include <windows.h>
+static char s_simLogPath[MAX_PATH] = { 0 };
+static PVOID s_simVehHandle = NULL;
+
+static void SimWriteLogFile(const char* text)
+{
+    if (!s_simLogPath[0] || !text) return;
+    FILE* fp = fopen(s_simLogPath, "a");
+    if (fp) {
+        fputs(text, fp);
+        fflush(fp);
+        fclose(fp);
+    }
+}
+
+static LONG WINAPI SimVectoredCrashHandler(PEXCEPTION_POINTERS ep)
+{
+    if (!ep || !ep->ExceptionRecord || !ep->ContextRecord) return EXCEPTION_CONTINUE_SEARCH;
+    DWORD code = ep->ExceptionRecord->ExceptionCode;
+    if (code != EXCEPTION_ACCESS_VIOLATION &&
+        code != EXCEPTION_ILLEGAL_INSTRUCTION &&
+        code != EXCEPTION_INT_DIVIDE_BY_ZERO &&
+        code != EXCEPTION_STACK_OVERFLOW) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    HMODULE hmSelf = NULL;
+    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                       (LPCSTR)&SimVectoredCrashHandler, &hmSelf);
+    uintptr_t selfBase = (uintptr_t)hmSelf;
+
+    HMODULE hmFault = NULL;
+    char faultModName[MAX_PATH] = "unknown";
+    uintptr_t eip = (uintptr_t)ep->ContextRecord->Eip;
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           (LPCSTR)eip, &hmFault) && hmFault) {
+        GetModuleFileNameA(hmFault, faultModName, MAX_PATH);
+    }
+    uintptr_t faultBase = (uintptr_t)hmFault;
+
+    char msg[1024];
+    snprintf(msg, sizeof(msg),
+             "\n=== SIM CRASH code=0x%08lX addr=%p EIP=%p (mod=%s+0x%X, selfBase=%p) ===\n"
+             "EAX=%08lX EBX=%08lX ECX=%08lX EDX=%08lX ESI=%08lX EDI=%08lX EBP=%08lX ESP=%08lX\n",
+             (unsigned long)code,
+             ep->ExceptionRecord->ExceptionAddress,
+             (void*)eip,
+             faultModName,
+             (unsigned)(faultBase ? (eip - faultBase) : eip),
+             (void*)selfBase,
+             (unsigned long)ep->ContextRecord->Eax,
+             (unsigned long)ep->ContextRecord->Ebx,
+             (unsigned long)ep->ContextRecord->Ecx,
+             (unsigned long)ep->ContextRecord->Edx,
+             (unsigned long)ep->ContextRecord->Esi,
+             (unsigned long)ep->ContextRecord->Edi,
+             (unsigned long)ep->ContextRecord->Ebp,
+             (unsigned long)ep->ContextRecord->Esp);
+    SimWriteLogFile(msg);
+
+    uintptr_t eax = (uintptr_t)ep->ContextRecord->Eax;
+    if (eax >= 0x10000 && !IsBadReadPtr((const void*)eax, 16)) {
+        const uint32_t* p = (const uint32_t*)eax;
+        snprintf(msg, sizeof(msg), "EAX[0..3]: %08X %08X %08X %08X\n", p[0], p[1], p[2], p[3]);
+        SimWriteLogFile(msg);
+    }
+
+    uintptr_t esp = (uintptr_t)ep->ContextRecord->Esp;
+    if (esp >= 0x10000 && !IsBadReadPtr((const void*)esp, 256)) {
+        const uint32_t* sp = (const uint32_t*)esp;
+        SimWriteLogFile("Stack RVAs in 990002.dll:\n");
+        for (int i = 0; i < 64; i++) {
+            uintptr_t v = sp[i];
+            if (selfBase && v >= selfBase && v < selfBase + 0x00800000) {
+                snprintf(msg, sizeof(msg), "  [ESP+%02X] = 990002.dll+0x%06X\n", i * 4, (unsigned)(v - selfBase));
+                SimWriteLogFile(msg);
+            }
+        }
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
 static void SimSetModuleCwd(void)
 {
     HMODULE hm = NULL;
@@ -18,8 +99,17 @@ static void SimSetModuleCwd(void)
             if (slash) {
                 *slash = '\0';
                 SetCurrentDirectoryA(path);
+                snprintf(s_simLogPath, sizeof(s_simLogPath), "%s\\sim_debug.log", path);
+                FILE* fp = fopen(s_simLogPath, "w");
+                if (fp) {
+                    fprintf(fp, "=== GTA3 Simulator Log Started (base=%p) ===\n", (void*)hm);
+                    fclose(fp);
+                }
             }
         }
+    }
+    if (!s_simVehHandle) {
+        s_simVehHandle = AddVectoredExceptionHandler(1, SimVectoredCrashHandler);
     }
 }
 #endif
@@ -33,6 +123,9 @@ void Zeebo_Log(const char* fmt, ...)
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
+#ifdef AEE_SIMULATOR
+    SimWriteLogFile(buf);
+#endif
     if (g_Zeebo.pHelpers && g_Zeebo.pHelpers->pfnDbgPrintf) {
         g_Zeebo.pHelpers->pfnDbgPrintf("%s", buf);
     }
