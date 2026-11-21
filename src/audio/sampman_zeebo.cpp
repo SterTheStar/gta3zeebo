@@ -221,8 +221,8 @@ static void OnBrewMediaNotify(void* pUser, AEEMediaCmdNotify* pn)
 		break;
 
 	case MM_CMD_GETTOTALTIME:
-		if (pn->nStatus == MM_STATUS_DONE && pn->pCmdData && pn->dwSize >= sizeof(uint32_t)) {
-			int32 t = (int32)(*(const uint32_t*)pn->pCmdData);
+		if (pn->nStatus == MM_STATUS_DONE && pn->pCmdData) {
+			int32 t = (int32)(uintptr_t)pn->pCmdData;
 			if (t > 0) mh->lengthMs = t;
 		}
 		break;
