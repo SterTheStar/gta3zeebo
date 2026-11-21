@@ -356,18 +356,60 @@ static int ComputeChannelBrewVol(const ZeeboSfxChannel& ch, uint8 masterVol, uin
 
 	if (ch.is3D && ch.maxDist > 0.01f) {
 		float dist = sqrtf(ch.posX * ch.posX + ch.posY * ch.posY + ch.posZ * ch.posZ);
-		float refDist = (ch.minDist > 1.5f) ? ch.minDist : 1.5f;
-		if (dist >= ch.maxDist) {
+		float refDist = (ch.minDist > 0.5f) ? ch.minDist : 0.5f;
+		float maxDist = (ch.maxDist > refDist + 0.1f) ? ch.maxDist : (refDist + 0.1f);
+		if (dist >= maxDist) {
 			v = 0.0f;
 		} else if (dist > refDist) {
-			float atten = refDist / (refDist + (dist - refDist));
-			float fade = 1.0f - (dist - refDist) / (ch.maxDist - refDist);
-			if (fade < 0.0f) fade = 0.0f;
-			v *= atten * fade;
+			// Match OpenAL AL_INVERSE_DISTANCE_CLAMPED over the main range, then taper smoothly in the last 25%
+			float gain = refDist / dist;
+			float fadeStart = refDist + (maxDist - refDist) * 0.75f;
+			if (dist > fadeStart) {
+				float t = (maxDist - dist) / (maxDist - fadeStart);
+				if (t < 0.0f) t = 0.0f;
+				gain *= t;
+			}
+			v *= gain;
 		}
 	}
 
 	return ClampBrewVol((int)(v * (float)AEE_MAX_VOLUME + 0.5f));
+}
+
+static int ComputeChannelBrewPan(const ZeeboSfxChannel& ch)
+{
+	if (!ch.is3D) {
+		return GtaPanToBrewPan((uint8)ch.pan);
+	}
+	float dist = sqrtf(ch.posX * ch.posX + ch.posY * ch.posY + ch.posZ * ch.posZ);
+	if (dist < 0.001f) {
+		return MM_MAX_PAN / 2;
+	}
+	// AudioManager passes camera-space coords where -fX is right (matches sampman_oal / sampman_miles)
+	float normX = -ch.posX / dist;
+	float refDist = (ch.minDist > 0.5f) ? ch.minDist : 0.5f;
+	if (dist < refDist) {
+		normX *= (dist / refDist);
+	}
+	int bp = (MM_MAX_PAN / 2) + (int)(normX * 48.0f + (normX >= 0.0f ? 0.5f : -0.5f));
+	if (bp < 0) bp = 0;
+	if (bp > MM_MAX_PAN) bp = MM_MAX_PAN;
+	return bp;
+}
+
+static void ApplyChannelBrewParams(ZeeboSfxChannel& ch, uint8 masterVol, uint8 fadeVol)
+{
+	if (!ch.mh.media || !ch.mh.media->pvt) return;
+	int bv = ComputeChannelBrewVol(ch, masterVol, fadeVol);
+	if (bv != ch.mh.lastBrewVol) {
+		ch.mh.lastBrewVol = bv;
+		ch.mh.media->pvt->SetMediaParm(ch.mh.media, MM_PARM_VOLUME, bv, 0);
+	}
+	int bp = ComputeChannelBrewPan(ch);
+	if (bp != ch.mh.lastBrewPan) {
+		ch.mh.lastBrewPan = bp;
+		ch.mh.media->pvt->SetMediaParm(ch.mh.media, MM_PARM_PAN, bp, 0);
+	}
 }
 
 static void ReapFinishedAndLimitVoices(uint8 masterVol, uint8 fadeVol)
@@ -822,13 +864,7 @@ void cSampleManager::SetChannelEmittingVolume(uint32 nChannel, uint32 nVolume)
 	if (nChannel >= NUM_CHANNELS) return;
 	ZeeboSfxChannel& ch = s_channels[nChannel];
 	ch.volume = (nVolume > MAX_VOLUME) ? MAX_VOLUME : nVolume;
-	if (ch.mh.media && ch.mh.media->pvt) {
-		int bv = ComputeChannelBrewVol(ch, m_nEffectsVolume, m_nEffectsFadeVolume);
-		if (bv != ch.mh.lastBrewVol) {
-			ch.mh.lastBrewVol = bv;
-			ch.mh.media->pvt->SetMediaParm(ch.mh.media, MM_PARM_VOLUME, bv, 0);
-		}
-	}
+	ApplyChannelBrewParams(ch, m_nEffectsVolume, m_nEffectsFadeVolume);
 }
 
 void cSampleManager::SetChannel3DPosition(uint32 nChannel, float fX, float fY, float fZ)
@@ -839,13 +875,7 @@ void cSampleManager::SetChannel3DPosition(uint32 nChannel, float fX, float fY, f
 	ch.posX = fX;
 	ch.posY = fY;
 	ch.posZ = fZ;
-	if (ch.mh.media && ch.mh.media->pvt) {
-		int bv = ComputeChannelBrewVol(ch, m_nEffectsVolume, m_nEffectsFadeVolume);
-		if (bv != ch.mh.lastBrewVol) {
-			ch.mh.lastBrewVol = bv;
-			ch.mh.media->pvt->SetMediaParm(ch.mh.media, MM_PARM_VOLUME, bv, 0);
-		}
-	}
+	ApplyChannelBrewParams(ch, m_nEffectsVolume, m_nEffectsFadeVolume);
 }
 
 void cSampleManager::SetChannel3DDistances(uint32 nChannel, float fMax, float fMin)
@@ -855,6 +885,7 @@ void cSampleManager::SetChannel3DDistances(uint32 nChannel, float fMax, float fM
 	ch.is3D = true;
 	ch.maxDist = fMax;
 	ch.minDist = fMin;
+	ApplyChannelBrewParams(ch, m_nEffectsVolume, m_nEffectsFadeVolume);
 }
 
 void cSampleManager::SetChannelVolume(uint32 nChannel, uint32 nVolume)
@@ -862,13 +893,7 @@ void cSampleManager::SetChannelVolume(uint32 nChannel, uint32 nVolume)
 	if (nChannel >= NUM_CHANNELS) return;
 	ZeeboSfxChannel& ch = s_channels[nChannel];
 	ch.volume = (nVolume > MAX_VOLUME) ? MAX_VOLUME : nVolume;
-	if (ch.mh.media && ch.mh.media->pvt) {
-		int bv = ComputeChannelBrewVol(ch, m_nEffectsVolume, m_nEffectsFadeVolume);
-		if (bv != ch.mh.lastBrewVol) {
-			ch.mh.lastBrewVol = bv;
-			ch.mh.media->pvt->SetMediaParm(ch.mh.media, MM_PARM_VOLUME, bv, 0);
-		}
-	}
+	ApplyChannelBrewParams(ch, m_nEffectsVolume, m_nEffectsFadeVolume);
 }
 
 void cSampleManager::SetChannelPan(uint32 nChannel, uint32 nPan)
@@ -876,13 +901,7 @@ void cSampleManager::SetChannelPan(uint32 nChannel, uint32 nPan)
 	if (nChannel >= NUM_CHANNELS) return;
 	ZeeboSfxChannel& ch = s_channels[nChannel];
 	ch.pan = (nPan > MAX_VOLUME) ? MAX_VOLUME : nPan;
-	if (ch.mh.media && ch.mh.media->pvt) {
-		int bp = GtaPanToBrewPan((uint8)ch.pan);
-		if (bp != ch.mh.lastBrewPan) {
-			ch.mh.lastBrewPan = bp;
-			ch.mh.media->pvt->SetMediaParm(ch.mh.media, MM_PARM_PAN, bp, 0);
-		}
-	}
+	ApplyChannelBrewParams(ch, m_nEffectsVolume, m_nEffectsFadeVolume);
 }
 
 void cSampleManager::SetChannelFrequency(uint32 nChannel, uint32 nFreq)
@@ -964,7 +983,7 @@ void cSampleManager::StartChannel(uint32 nChannel)
 		ch.mh.lengthMs = (int32)((uint64_t)smp.nSize * 1000ULL / ((uint64_t)rate * 2ULL));
 		ch.mh.looping = (ch.loopCount == 0);
 		ch.mh.lastBrewVol = bv;
-		ch.mh.lastBrewPan = GtaPanToBrewPan((uint8)ch.pan);
+		ch.mh.lastBrewPan = ComputeChannelBrewPan(ch);
 		ch.startTick = ++s_voiceTick;
 
 		m->pvt->RegisterNotify(m, OnBrewMediaNotify, &ch.mh);
@@ -972,7 +991,7 @@ void cSampleManager::StartChannel(uint32 nChannel)
 			m->pvt->SetMediaParm(m, MM_PARM_PLAY_REPEAT, 0, 0);
 		}
 		m->pvt->SetMediaParm(m, MM_PARM_VOLUME, bv, 0);
-		if (!ch.is3D && ch.mh.lastBrewPan != (MM_MAX_PAN / 2)) {
+		if (ch.mh.lastBrewPan != (MM_MAX_PAN / 2)) {
 			m->pvt->SetMediaParm(m, MM_PARM_PAN, ch.mh.lastBrewPan, 0);
 		}
 		if (m->pvt->Play(m) != AEE_SUCCESS) {
