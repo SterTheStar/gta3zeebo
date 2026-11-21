@@ -400,7 +400,7 @@ CVisibilityPlugins::RenderAlphaAtomic(RpAtomic *atomic, int alpha)
 	flags = RpGeometryGetFlags(geo);
 	RpGeometrySetFlags(geo, flags | rpGEOMETRYMODULATEMATERIALCOLOR);
 	RpGeometryForAllMaterials(geo, SetAlphaCB, (void*)alpha);
-	RENDERCALLBACK(atomic);
+	RenderAtomicNoCull(atomic);
 	RpGeometryForAllMaterials(geo, SetAlphaCB, (void*)255);
 	RpGeometrySetFlags(geo, flags);
 	return atomic;

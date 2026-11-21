@@ -1099,6 +1099,7 @@ extern uint32_t g_zeeboDrawCalls;
 extern uint32_t g_zeeboTris;
 }
 #include "platform/zeebo/zeebo_brew.h"
+#include "platform/zeebo/zeebo_mempanel.h"
 static char s_zeeboProfStr[160] = "";
 #endif
 
@@ -1571,6 +1572,9 @@ Render2dStuffAfterFade(void)
 #endif
 
 	CHud::DrawAfterFade();
+#ifdef __ZEEBO__
+	ZeeboMemPanel::Draw();
+#endif
 	CFont::DrawFonts();
 	POP_RENDERGROUP();
 }
@@ -1812,6 +1816,7 @@ Idle(void *arg)
 		if (s_f >= 30) {
 			uint32_t fps = (s_tot > 0) ? (s_f * 1000u / s_tot) : 0;
 			uint32_t rfps = (s_dt > 0) ? (s_f * 1000u / s_dt) : 0;
+			ZeeboMemPanel::UpdateFrameStats(rfps, s_dt / s_f, s_dc / s_f, s_tri / s_f);
 			snprintf(s_zeeboProfStr, sizeof(s_zeeboProfStr),
 				"RF:%u DT:%u F:%u T:%u P:%u L:%u S:%u X:%u 2D:%u SW:%u DC:%u TR:%u",
 				(unsigned)rfps, (unsigned)(s_dt / s_f),

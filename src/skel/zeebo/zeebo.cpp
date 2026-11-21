@@ -23,6 +23,7 @@
 #include "../../platform/zeebo/zeebo_brew.h"
 #include "../../platform/zeebo/zeebo_movie.h"
 #include "../../platform/zeebo/zeebo_gles1.h"
+#include "../../platform/zeebo/zeebo_mempanel.h"
 #include "../../platform/zeebo/pandora_logo.h"
 #include "../../platform/zeebo/splash_image.h"
 
@@ -129,8 +130,72 @@ void psMouseSetPos(RwV2d *pos)
 	(void)pos;
 }
 
+#ifdef AEE_SIMULATOR
+extern "C" int Zeebo_PurgeMemoryForAlloc(size_t needed);
+
+static void *SimBrewMalloc(size_t size)
+{
+	if(g_Zeebo.pHelpers && g_Zeebo.pHelpers->pfnMalloc){
+		uint32_t req = (uint32_t)(size ? size : 1);
+		void *p = g_Zeebo.pHelpers->pfnMalloc(req);
+		if(!p && g_Zeebo.bRunning){
+			if(Zeebo_PurgeMemoryForAlloc(req)){
+				p = g_Zeebo.pHelpers->pfnMalloc(req);
+			}
+		}
+		return p;
+	}
+	return malloc(size);
+}
+
+static void SimBrewFree(void *mem)
+{
+	if(!mem) return;
+	if(g_Zeebo.pHelpers && g_Zeebo.pHelpers->pfnFree){
+		g_Zeebo.pHelpers->pfnFree(mem);
+	}else{
+		free(mem);
+	}
+}
+
+static void *SimBrewRealloc(void *mem, size_t newSize)
+{
+	if(g_Zeebo.pHelpers && g_Zeebo.pHelpers->pfnRealloc){
+		uint32_t req = (uint32_t)(newSize ? newSize : 1);
+		void *p = g_Zeebo.pHelpers->pfnRealloc(mem, req);
+		if(!p && g_Zeebo.bRunning){
+			if(Zeebo_PurgeMemoryForAlloc(req)){
+				p = g_Zeebo.pHelpers->pfnRealloc(mem, req);
+			}
+		}
+		return p;
+	}
+	return realloc(mem, newSize);
+}
+
+static void *SimBrewCalloc(size_t numObj, size_t sizeObj)
+{
+	size_t total = numObj * sizeObj;
+	void *p = SimBrewMalloc(total);
+	if(p) memset(p, 0, total);
+	return p;
+}
+
+static RwMemoryFunctions s_simBrewMemFuncs = {
+	SimBrewMalloc,
+	SimBrewFree,
+	SimBrewRealloc,
+	SimBrewCalloc
+};
+#endif
+
 RwMemoryFunctions *psGetMemoryFunctions(void)
 {
+#ifdef AEE_SIMULATOR
+	if(g_Zeebo.pHelpers && g_Zeebo.pHelpers->pfnMalloc && g_Zeebo.pHelpers->pfnFree && g_Zeebo.pHelpers->pfnRealloc){
+		return &s_simBrewMemFuncs;
+	}
+#endif
 	return nil;
 }
 
@@ -401,6 +466,15 @@ void CPad::AffectFromZeebo(void)
 	}
 	s_prevHidBtn = s_hidBtnState;
 
+	// Toggle memory diagnostics panel on Start + D-Pad Down
+	static bool s_prevMemCombo = false;
+	const uint32_t kMemComboMask = (1u << 11) | (1u << 14);
+	bool memCombo = ((s_hidBtnState & kMemComboMask) == kMemComboMask);
+	if(memCombo && !s_prevMemCombo){
+		ZeeboMemPanel::Toggle();
+	}
+	s_prevMemCombo = memCombo;
+
 	// Map Z-Pad button indices (zeebx-emu BUTTON_UIDS order) -> CControllerState
 	PCTempJoyState.Cross          = (s_hidBtnState & (1u << 0))  ? 255 : 0; // b1 / A
 	PCTempJoyState.Circle         = (s_hidBtnState & (1u << 1))  ? 255 : 0; // b2 / B
@@ -413,7 +487,7 @@ void CPad::AffectFromZeebo(void)
 	PCTempJoyState.RightShock     = (s_hidBtnState & (1u << 8))  ? 255 : 0; // rthumb
 	PCTempJoyState.Select         = (s_hidBtnState & (1u << 9))  ? 255 : 0; // back / HOME
 	PCTempJoyState.LeftShock      = (s_hidBtnState & (1u << 10)) ? 255 : 0; // lthumb
-	PCTempJoyState.Start          = (s_hidBtnState & (1u << 11)) ? 255 : 0; // start
+	PCTempJoyState.Start          = (!memCombo && (s_hidBtnState & (1u << 11))) ? 255 : 0; // start
 	PCTempJoyState.DPadUp         = (s_hidBtnState & (1u << 12)) ? 255 : 0; // D-Pad UP
 	PCTempJoyState.DPadLeft       = (s_hidBtnState & (1u << 13)) ? 255 : 0; // D-Pad LEFT
 	PCTempJoyState.DPadDown       = (s_hidBtnState & (1u << 14)) ? 255 : 0; // D-Pad DOWN
@@ -856,6 +930,7 @@ extern "C" boolean Zeebo_OnKeyEvent(AEEEvent evt, uint16_t keyCode, uint32_t dwP
 }
 
 extern "C" void Zeebo_PurgeAudioCache(void);
+extern "C" uint32_t g_zeeboMemPurges = 0;
 
 extern "C" int Zeebo_PurgeMemoryForAlloc(size_t needed)
 {
@@ -863,6 +938,7 @@ extern "C" int Zeebo_PurgeMemoryForAlloc(size_t needed)
 	static bool s_inPurge = false;
 	if(s_inPurge) return 0;
 	s_inPurge = true;
+	g_zeeboMemPurges++;
 
 	Zeebo_PurgeAudioCache();
 	if(s_rwInitialized && gGameState == GS_PLAYING_GAME){
