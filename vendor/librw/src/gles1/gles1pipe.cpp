@@ -24,6 +24,18 @@ extern uint32_t g_zeeboTris;
 namespace rw {
 namespace gles1 {
 
+#ifdef AEE_SIMULATOR
+typedef float32 Gles1VtxCoord;
+#define GLES1_VTX_TYPE GL_FLOAT
+static inline float32 ZeeboToVtxCoord(float32 v) { return v; }
+static inline float32 ZeeboFromVtxCoord(float32 v) { return v; }
+#else
+typedef GLfixed Gles1VtxCoord;
+#define GLES1_VTX_TYPE GL_FIXED
+static inline GLfixed ZeeboToVtxCoord(float32 v) { return ZeeboToFixed(v); }
+static inline float32 ZeeboFromVtxCoord(GLfixed v) { return v * (1.0f / 65536.0f); }
+#endif
+
 static void defaultUninstanceCB(Geometry *geo, InstanceDataHeader *header);
 
 static void instanceNothing(Geometry *geo, InstanceDataHeader *header, bool32 reinstance)
@@ -115,13 +127,13 @@ static void defaultInstanceCB(Geometry *geo, InstanceDataHeader *header, bool32 
 	uint8 *dst = header->vertexBuffer;
 
 	for(int32 i = 0; i < geo->numVertices; i++, dst += stride){
-		GLfixed *pDst = (GLfixed*)dst;
+		Gles1VtxCoord *pDst = (Gles1VtxCoord*)dst;
 		if(pos){
-			pDst[0] = ZeeboToFixed(pos[i].x);
-			pDst[1] = ZeeboToFixed(pos[i].y);
-			pDst[2] = ZeeboToFixed(pos[i].z);
+			pDst[0] = ZeeboToVtxCoord(pos[i].x);
+			pDst[1] = ZeeboToVtxCoord(pos[i].y);
+			pDst[2] = ZeeboToVtxCoord(pos[i].z);
 		}else{
-			pDst[0] = pDst[1] = pDst[2] = 0;
+			pDst[0] = pDst[1] = pDst[2] = (Gles1VtxCoord)0;
 		}
 		if(normOff >= 0){
 			int8_t *nDst = (int8_t*)(dst + normOff);
@@ -138,9 +150,9 @@ static void defaultInstanceCB(Geometry *geo, InstanceDataHeader *header, bool32 
 			cDst[3] = col[i].alpha;
 		}
 		if(uvOff >= 0){
-			GLfixed *tDst = (GLfixed*)(dst + uvOff);
-			tDst[0] = ZeeboToFixed(uv[i].u);
-			tDst[1] = ZeeboToFixed(uv[i].v);
+			Gles1VtxCoord *tDst = (Gles1VtxCoord*)(dst + uvOff);
+			tDst[0] = ZeeboToVtxCoord(uv[i].u);
+			tDst[1] = ZeeboToVtxCoord(uv[i].v);
 		}
 	}
 
@@ -336,7 +348,7 @@ static void RenderMeshesWithVerts(const IGLVtbl *gl, Atomic *atomic, InstanceDat
 	const int stride = (int)header->stride;
 	setClientStates(true, useLight, hasColor, hasTex);
 
-	gl->glVertexPointer(3, GL_FIXED, stride, vertBuf + header->posOffset);
+	gl->glVertexPointer(3, GLES1_VTX_TYPE, stride, vertBuf + header->posOffset);
 	if(useLight){
 		gl->glNormalPointer(GL_BYTE, stride, vertBuf + header->normalOffset);
 	}
@@ -391,7 +403,7 @@ static void RenderMeshesWithVerts(const IGLVtbl *gl, Atomic *atomic, InstanceDat
 		gl->glColorPointer(4, GL_UNSIGNED_BYTE, colStride, colPtr);
 	}
 	if(hasTex){
-		gl->glTexCoordPointer(2, GL_FIXED, stride, vertBuf + header->texCoordOffset);
+		gl->glTexCoordPointer(2, GLES1_VTX_TYPE, stride, vertBuf + header->texCoordOffset);
 	}
 
 	for(uint32 i = 0; i < header->numMeshes; i++){
@@ -413,6 +425,7 @@ static void RenderMeshesWithVerts(const IGLVtbl *gl, Atomic *atomic, InstanceDat
 				SetRenderState(TEXTURERASTER, nil);
 			}
 		}
+		setClientStates(true, useLight, hasColor, hasTex && isTextureEnabled());
 
 		uint16 *idx = (uint16*)((uint8*)header->indexBuffer + inst->offset);
 		uint32 triCount = (header->primType == GL_TRIANGLE_STRIP)
@@ -551,10 +564,10 @@ static void skinRenderCB(Atomic *atomic, InstanceDataHeader *header)
 		if(srcPos){
 			sx = srcPos[i].x; sy = srcPos[i].y; sz = srcPos[i].z;
 		}else{
-			const GLfixed *fp = (const GLfixed*)srcRaw;
-			sx = fp[0] * (1.0f / 65536.0f);
-			sy = fp[1] * (1.0f / 65536.0f);
-			sz = fp[2] * (1.0f / 65536.0f);
+			const Gles1VtxCoord *fp = (const Gles1VtxCoord*)srcRaw;
+			sx = ZeeboFromVtxCoord(fp[0]);
+			sy = ZeeboFromVtxCoord(fp[1]);
+			sz = ZeeboFromVtxCoord(fp[2]);
 		}
 
 		const uint8   *idx = &skin->indices[i * 4];
@@ -619,10 +632,10 @@ static void skinRenderCB(Atomic *atomic, InstanceDataHeader *header)
 			}
 		}
 
-		GLfixed *pDst = (GLfixed*)dst;
-		pDst[0] = ZeeboToFixed(px);
-		pDst[1] = ZeeboToFixed(py);
-		pDst[2] = ZeeboToFixed(pz);
+		Gles1VtxCoord *pDst = (Gles1VtxCoord*)dst;
+		pDst[0] = ZeeboToVtxCoord(px);
+		pDst[1] = ZeeboToVtxCoord(py);
+		pDst[2] = ZeeboToVtxCoord(pz);
 	}
 
 	RenderMeshesWithVerts(gl, atomic, header, s_skinScratch);

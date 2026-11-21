@@ -271,6 +271,10 @@ struct ZeeboStream {
 	int32   lengthMs;
 	int     lastBrewVol;
 	char    path[260];
+#ifdef AEE_SIMULATOR
+	uint8*  simBuf;
+	uint32  simBufSize;
+#endif
 };
 
 static ZeeboStream s_streams[MAX_STREAMS];
@@ -280,7 +284,11 @@ static bool TestFileExists(const char* path)
 {
 	if (!path || !path[0]) return false;
 	if (g_Zeebo.pFileMgr && g_Zeebo.pFileMgr->pvt) {
-		return g_Zeebo.pFileMgr->pvt->Test(g_Zeebo.pFileMgr, path) == AEE_SUCCESS;
+		if (g_Zeebo.pFileMgr->pvt->Test(g_Zeebo.pFileMgr, path) == AEE_SUCCESS)
+			return true;
+#ifndef AEE_SIMULATOR
+		return false;
+#endif
 	}
 	FILE* f = fopen(path, "rb");
 	if (f) { fclose(f); return true; }
@@ -375,6 +383,13 @@ static void ReleaseStreamMedia(ZeeboStream& st)
 	st.media = NULL;
 	st.paused = false;
 	st.lastBrewVol = -1;
+#ifdef AEE_SIMULATOR
+	if (st.simBuf) {
+		free(st.simBuf);
+		st.simBuf = NULL;
+		st.simBufSize = 0;
+	}
+#endif
 }
 
 } // namespace
@@ -852,8 +867,38 @@ bool8 cSampleManager::StartStreamedFile(uint8 nFile, uint32 nPos, uint8 nStream)
 
 	IMedia* m = NULL;
 	int rc = g_Zeebo.pMediaUtil->pvt->CreateMedia(g_Zeebo.pMediaUtil, &md, &m);
+#ifdef AEE_SIMULATOR
+	if (rc != AEE_SUCCESS || !m || !m->pvt) {
+		if (m && m->pvt) { m->pvt->Release(m); m = NULL; }
+		FILE* fp = fopen(st.path, "rb");
+		if (fp) {
+			fseek(fp, 0, SEEK_END);
+			long fsz = ftell(fp);
+			fseek(fp, 0, SEEK_SET);
+			if (fsz > 0 && fsz <= 16 * 1024 * 1024) {
+				st.simBuf = (uint8*)malloc((size_t)fsz);
+				if (st.simBuf) {
+					if (fread(st.simBuf, 1, (size_t)fsz, fp) == (size_t)fsz) {
+						st.simBufSize = (uint32)fsz;
+						md.clsData = MMD_BUFFER;
+						md.pData   = st.simBuf;
+						md.dwSize  = st.simBufSize;
+						rc = g_Zeebo.pMediaUtil->pvt->CreateMedia(g_Zeebo.pMediaUtil, &md, &m);
+					} else {
+						free(st.simBuf);
+						st.simBuf = NULL;
+					}
+				}
+			}
+			fclose(fp);
+		}
+	}
+#endif
 	if (rc != AEE_SUCCESS || !m || !m->pvt) {
 		if (m && m->pvt) m->pvt->Release(m);
+#ifdef AEE_SIMULATOR
+		if (st.simBuf) { free(st.simBuf); st.simBuf = NULL; st.simBufSize = 0; }
+#endif
 		Zeebo_Log("[AUD] CreateMedia failed for '%s' rc=%d\n", st.path, rc);
 		return FALSE;
 	}
