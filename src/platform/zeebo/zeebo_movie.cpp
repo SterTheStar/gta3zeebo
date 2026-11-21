@@ -120,6 +120,11 @@ static void WriteMovieWavHeader(uint8_t* dst, uint32_t pcmBytes, uint32_t sample
 
 static void StartMovieAudio(const uint8_t* fileData, size_t fileSize)
 {
+#ifdef AEE_SIMULATOR
+	(void)fileData;
+	(void)fileSize;
+	return;
+#endif
 	if (!g_Zeebo.pMediaUtil || !g_Zeebo.pMediaUtil->pvt) return;
 
 	plm_t* aplm = plm_create_with_memory((uint8_t*)fileData, fileSize, 0);
